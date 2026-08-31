@@ -1,0 +1,2665 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus V Custom Controller</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="logo%20192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Focus V Ctrl">
+<meta name="theme-color" content="#0c0e13">
+<style>
+  :root {
+    --bg: #0c0e13; --panel: #161922; --panel-2: #1c202b; --border: #2a2f3c;
+    --text: #eef0f3; --muted: #8b92a1; --accent: #5b9dff; --accent-dim: #2c3d5c;
+    --ok: #3ecf8e; --ok-dim: #163829; --warn: #ffb454; --err: #ff6b6b; --err-dim: #3a1f22;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px; -webkit-font-smoothing: antialiased;
+  }
+  code, .mono, #log, .mono-input { font-family: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace; }
+
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex;
+    align-items: center; gap: 14px; flex-wrap: wrap; background: var(--panel);
+  }
+  header .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+  header .brand .flame { font-size: 18px; }
+  .conn-group { margin-left: auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .pill {
+    display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 99px;
+    background: var(--panel-2); border: 1px solid var(--border); font-size: 12px; color: var(--muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--err); flex-shrink: 0; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+
+  main { max-width: 900px; margin: 0 auto; padding: 20px 16px 60px; display: flex; flex-direction: column; gap: 16px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .card-title {
+    color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+    font-weight: 600; margin: 0 0 14px;
+  }
+
+  /* Dashboard */
+  .dashboard { display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: center; }
+  .hero-temp { text-align: center; padding: 10px 24px; }
+  .hero-temp .val { font-size: 56px; font-weight: 700; line-height: 1; letter-spacing: -.02em; }
+  .hero-temp .val .unit { font-size: 24px; color: var(--muted); font-weight: 600; margin-left: 2px; }
+  .hero-temp .label { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .session-badge {
+    display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 4px 12px;
+    border-radius: 99px; font-size: 11px; font-weight: 600; background: var(--panel-2); color: var(--muted);
+  }
+  .session-badge.heating { background: var(--ok-dim); color: var(--ok); }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .stat {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+  }
+  .stat .stat-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+  .stat .stat-val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .stat .stat-sub { color: var(--muted); font-size: 11px; margin-top: 1px; }
+  @media (max-width: 620px) { .dashboard { grid-template-columns: 1fr; } .hero-temp { padding: 0; } }
+
+  .device-line { color: var(--muted); font-size: 12px; margin-top: 12px; }
+  .device-line b { color: var(--text); font-weight: 500; }
+
+  /* Connect buttons */
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 10px;
+    padding: 9px 16px; font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  button:hover:not(:disabled) { background: #232838; border-color: #3a4257; }
+  button:disabled { opacity: .35; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #06090f; border-color: var(--accent); }
+  button.primary:hover:not(:disabled) { background: #74acff; }
+  button.ok { background: var(--ok); color: #06140d; border-color: var(--ok); }
+  button.ok:hover:not(:disabled) { background: #58e0a4; }
+  button.danger { background: transparent; color: var(--err); border-color: #52272a; }
+  button.danger:hover:not(:disabled) { background: var(--err-dim); }
+  button.ghost { background: transparent; }
+  button.big { width: 100%; padding: 13px; font-size: 14px; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  /* Tabs — horizontal scroll instead of wrapping, so N tabs stay one clean row on any width */
+  .tabs {
+    display: flex; gap: 4px; background: var(--panel-2); border-radius: 10px; padding: 4px; margin-bottom: 18px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button {
+    flex: 0 0 auto; background: transparent; border: none; border-radius: 8px; padding: 9px 14px;
+    color: var(--muted); font-size: 13px; white-space: nowrap;
+  }
+  .tabs button.active { background: var(--panel); color: var(--text); }
+  .panel-body.hidden { display: none; }
+  .hidden { display: none; }
+
+  /* Toasts */
+  #toastContainer {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); z-index: 999;
+    display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none;
+  }
+  .toast {
+    background: var(--err-dim); border: 1px solid #52272a; color: var(--err); border-radius: 10px;
+    padding: 10px 16px; font-size: 12.5px; max-width: 90vw; box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    animation: toast-in .15s ease-out;
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* Segmented control */
+  .segmented { display: flex; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+  .segmented button {
+    flex: 1; background: transparent; border: none; border-radius: 7px; padding: 8px; color: var(--muted); font-size: 13px;
+  }
+  .segmented button.active { background: var(--accent); color: #06090f; }
+  .segmented button.device-active { box-shadow: inset 0 0 0 2px var(--ok); }
+  .segmented button.device-active::after { content: '● active'; display: block; font-size: 9px; margin-top: 2px; }
+
+  .field-row { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .field-row > div { flex: 1; min-width: 130px; }
+  .field-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .field-label .field-value { color: var(--text); font-weight: 700; font-size: 13px; }
+
+  input[type=range] {
+    width: 100%; accent-color: var(--accent); height: 4px; background: var(--panel-2);
+  }
+  input[type=number], select {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+    padding: 7px 9px; font-family: inherit; font-size: 13px; width: 100%;
+  }
+  input[type=color] {
+    width: 44px; height: 36px; padding: 2px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel-2); cursor: pointer;
+  }
+  .num-narrow { max-width: 90px; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; font-size: 13px; color: var(--text); }
+  .checkbox-row input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); flex-shrink: 0; }
+
+  .hint { color: var(--muted); font-size: 11.5px; line-height: 1.6; margin-top: 12px; }
+  .warn-box {
+    background: #241a0c; border: 1px solid var(--warn); color: var(--warn); border-radius: 10px;
+    padding: 10px 14px; font-size: 12px; line-height: 1.6; margin-bottom: 4px;
+  }
+
+  /* Curve */
+  .curve-box { margin-top: 16px; }
+  svg { width: 100%; height: 220px; display: block; }
+  #diagSvg { height: 150px; }
+
+  /* Waypoints */
+  .waypoint-row { align-items: flex-end; }
+  .waypoint-remove-cell { flex: 0 0 auto !important; min-width: 0 !important; padding-bottom: 14px; }
+
+  /* Presets */
+  .preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+  .preset-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 6px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; color: var(--text);
+  }
+  .preset-btn:hover:not(:disabled) { border-color: var(--accent); }
+  .preset-btn.device-active { box-shadow: inset 0 0 0 2px var(--ok); }
+  .preset-btn.device-active .preset-rank::after { content: ' ●'; color: var(--ok); }
+  .preset-btn.selected { box-shadow: inset 0 0 0 2px var(--accent); }
+  .preset-btn.selected.device-active { box-shadow: inset 0 0 0 2px var(--ok), inset 0 0 0 4px var(--accent); }
+  .preset-btn .preset-rank { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+  .preset-btn .preset-temp { font-size: 16px; font-weight: 700; }
+  .preset-btn .preset-dur { font-size: 11px; color: var(--muted); }
+
+  .color-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .color-row > div { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .color-row .color-label { font-size: 10px; color: var(--muted); }
+
+  #ssPreviewCanvas { display: none; width: 150px; height: 150px; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 14px; image-rendering: pixelated; }
+
+  /* Ramp presets */
+  .ramp-presets { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .ramp-preset { flex: 1; min-width: 150px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .ramp-preset.active { border-color: var(--ok); }
+  .ramp-preset-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
+  .ramp-preset-head b { font-size: 13px; }
+  .ramp-preset-summary { margin: 0 0 8px; min-height: 1.6em; }
+
+  details summary { cursor: pointer; color: var(--muted); font-size: 12px; list-style: none; display: flex; align-items: center; gap: 6px; }
+  details summary::-webkit-details-marker { display: none; }
+  details summary::before { content: '▸'; font-size: 10px; }
+  details[open] summary::before { content: '▾'; }
+  .export-link { margin-left: auto; color: var(--accent); cursor: pointer; font-size: 11px; }
+  #log {
+    font-size: 11px; white-space: pre-wrap; word-break: break-all; height: 200px; margin-top: 10px;
+    overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: var(--panel-2);
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<div id="toastContainer"></div>
+<header>
+  <span class="brand"><span class="flame">🔥</span> Focus V Controller</span>
+  <div class="conn-group">
+    <select id="deviceModelSel" style="width:auto" aria-label="Device model" title="Not detectable over BLE — see hint below. Scopes which tabs/options are shown.">
+      <option value="QUANTUM" selected>Carta 2 (Quantum)</option>
+      <option value="AERIS">Aeris</option>
+      <option value="SPORT">Carta Sport</option>
+    </select>
+    <span class="pill"><span class="dot" id="dot"></span><span id="statusText">Not connected</span></span>
+    <button type="button" class="ghost" id="btnReconnect" style="display:none">Reconnect</button>
+    <button type="button" class="primary" id="btnConnect">Connect</button>
+    <button type="button" class="danger" id="btnDisconnect" disabled>Disconnect</button>
+  </div>
+</header>
+
+<main>
+
+  <div class="warn-box">
+    ⚠ Hobby control tool built from reverse-engineered protocol, not an official app.
+    Remote start/stop and the open-loop ramp are confirmed working live. Presets, Settings,
+    LED preset editing, Diagnostics, multi-waypoint/closed-loop ramp pacing, and the write
+    queue/wake-lock robustness pass are newly added from static protocol analysis and
+    haven't been tested against real hardware yet — watch the raw log the first time you
+    try them. The <strong>device model</strong> dropdown (top right) scopes which
+    tabs/options are shown — e.g. Screensaver is a real Carta 2 (Quantum)-only feature, not
+    available on Aeris or Carta Sport, confirmed from the official app's own source. There's
+    no way to read this from the device over BLE (the real app doesn't either — it's a
+    one-time manual choice at pairing time, see <code>ble-protocol-notes.md</code>), so pick
+    it yourself; it defaults to Quantum, the superset of the other two.
+  </div>
+
+  <div class="card dashboard">
+    <div class="hero-temp">
+      <div class="val"><span id="heroTempVal">--</span><span class="unit" id="heroTempUnit">°F</span></div>
+      <div class="label">Live temperature</div>
+      <div class="session-badge" id="sessionBadge">💤 Idle</div>
+    </div>
+    <div>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="stat-label">Battery</div>
+          <div class="stat-val" id="statBattery">--%</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Auto-sleep</div>
+          <div class="stat-val" id="statSleep">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Flower set</div>
+          <div class="stat-val" id="statFlower">--°</div>
+          <div class="stat-sub" id="statFlowerSub">-- s</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Concentrate set</div>
+          <div class="stat-val" id="statConc">--°</div>
+          <div class="stat-sub" id="statConcSub">-- s</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Atomizer</div>
+          <div class="stat-val" id="statAtomizer">--</div>
+        </div>
+      </div>
+      <div class="device-line" id="deviceInfo">Connect a device to see its model, name, and live state here.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabs">
+      <button class="active" data-tab="panelQuick" type="button">Quick set</button>
+      <button data-tab="panelRamp" type="button">Ramp</button>
+      <button data-tab="panelPresets" type="button">Presets</button>
+      <button data-tab="panelLed" type="button">LED</button>
+      <button data-tab="panelScreensaver" type="button">Screensaver</button>
+      <button data-tab="panelSettings" type="button">Settings</button>
+      <button data-tab="panelDiag" type="button">Diagnostics</button>
+    </div>
+
+    <div id="panelQuick" class="panel-body">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Mode</div>
+          <div class="segmented" id="manModeSeg" data-value="flower">
+            <button type="button" data-val="flower" class="active">🌸 Flower</button>
+            <button type="button" data-val="concentrate">🟣 Concentrate</button>
+          </div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Target temperature <span class="field-value"><span id="manTempVal">380</span>°</span></div>
+          <input type="range" id="manTempSlider" min="300" max="460" value="380" aria-label="Target temperature">
+        </div>
+        <div style="max-width:110px">
+          <div class="field-label">Duration (s)</div>
+          <input type="number" id="manDuration" min="120" max="240" value="180" aria-label="Duration in seconds">
+        </div>
+      </div>
+      <button type="button" class="ok big" id="btnManSet" disabled>🔥 Start heating</button>
+      <div class="hint">Sends one <code>0xCC</code> write at this exact target, including
+        the warmup-trigger marker byte traced from the app's own "Tap to warm up" button —
+        starts heating remotely, no physical button needed. Echoes the other mode's
+        current temp/duration/ranking from live device state so it isn't disturbed.
+        Temp/duration ranges shown are the real confirmed per-mode, per-device limits (from
+        the app's own source), not a generic guess — they change with Mode and with the
+        Device model selector in the header.</div>
+    </div>
+
+    <div id="panelRamp" class="panel-body hidden">
+      <div class="card-title" style="margin-top:0">Saved ramps</div>
+      <div class="ramp-presets">
+        <div class="ramp-preset" id="rampPresetBoxA">
+          <div class="ramp-preset-head">
+            <b id="rampPresetNameA">Preset A</b>
+            <span class="export-link" id="btnSaveRampPresetA">save current</span>
+            <span class="export-link hidden" id="btnRenameRampPresetA">rename</span>
+          </div>
+          <div class="hint ramp-preset-summary" id="rampPresetSummaryA">(empty)</div>
+          <button type="button" class="ok" id="btnToggleRampPresetA" style="width:100%" disabled>▶ Start</button>
+        </div>
+        <div class="ramp-preset" id="rampPresetBoxB">
+          <div class="ramp-preset-head">
+            <b id="rampPresetNameB">Preset B</b>
+            <span class="export-link" id="btnSaveRampPresetB">save current</span>
+            <span class="export-link hidden" id="btnRenameRampPresetB">rename</span>
+          </div>
+          <div class="hint ramp-preset-summary" id="rampPresetSummaryB">(empty)</div>
+          <button type="button" class="ok" id="btnToggleRampPresetB" style="width:100%" disabled>▶ Start</button>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:0; margin-bottom:16px;">"Save current" captures everything below (mode,
+        waypoints, step/hold, closed-loop, notify) into that slot, prompting for a name. "Rename" (once a slot has
+        something saved) changes just the name, leaving the saved curve untouched. The Start/Stop button loads and
+        runs it in one tap — starting one stops whatever ramp is currently running first.</div>
+
+      <div class="field-row">
+        <div>
+          <div class="field-label">Mode</div>
+          <div class="segmented" id="rampModeSeg" data-value="concentrate">
+            <button type="button" data-val="flower">🌸 Flower</button>
+            <button type="button" data-val="concentrate" class="active">🟣 Concentrate</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-title" style="margin-top:4px">Waypoints</div>
+      <div id="waypointList"></div>
+      <button type="button" id="btnAddWaypoint" style="margin-bottom:14px">+ Add waypoint</button>
+
+      <div class="field-row">
+        <div>
+          <div class="field-label">Step interval (s)</div>
+          <input type="number" id="rampStep" value="2" aria-label="Step interval in seconds">
+        </div>
+        <div>
+          <div class="field-label">Hold at end (s)</div>
+          <input type="number" id="rampHold" value="60" aria-label="Hold duration in seconds">
+        </div>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="rampClosedLoop">
+        <label for="rampClosedLoop">Closed-loop pacing — hold each step until measured temp catches up, instead of racing the clock</label>
+      </div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="rampNotify">
+        <label for="rampNotify">Play a sound + notification when the ramp completes</label>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="ok big" id="btnRampStart" disabled style="flex:1">▶ Start ramp</button>
+        <button type="button" class="danger big" id="btnRampStop" disabled style="flex:1">■ Stop ramp</button>
+      </div>
+      <div class="hint">Steps the target through each waypoint in order, interpolated
+        linearly between them, purely on a timer — add waypoints for anything beyond a
+        straight ramp (a fast rise then a coast, a second bump, etc). Closed-loop mode uses
+        the same schedule but won't advance past a step until <code>0x99</code>'s live
+        measured temperature is within ~15° of the last commanded target — the device has
+        no BLE command for true continuous PID tracking, so this just paces the existing
+        step commands by reality instead of the clock. The curve below shows the commanded
+        line (dashed green, waypoints marked) and real measured temperature (solid orange).
+        Each step's write carries a short session duration as a fail-safe — if this app
+        crashes or disconnects mid-ramp, the device stops heating on its own shortly after.</div>
+      <div class="curve-box">
+        <svg id="curveSvg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
+        <button type="button" class="ghost" id="btnExportRamp" style="margin-top:10px">⬇ Export ramp CSV</button>
+      </div>
+    </div>
+
+    <div id="panelPresets" class="panel-body hidden">
+      <div class="btn-row" style="margin-bottom:14px">
+        <button type="button" id="btnRefreshPresets" style="flex:1" disabled>↻ Refresh from device</button>
+      </div>
+      <div class="card-title">Flower</div>
+      <div class="preset-grid" id="flowerPresetGrid"><div class="hint">Connect to load presets.</div></div>
+      <div class="card-title" style="margin-top:18px">Concentrate</div>
+      <div class="preset-grid" id="concPresetGrid"><div class="hint">Connect to load presets.</div></div>
+      <div class="hint">Loaded from the device's own 5-slot preset table, streamed
+        automatically right after connect. Tap a preset below to edit it — the
+        <span style="color:var(--accent)">blue</span> outline marks what you're editing, the
+        <span style="color:var(--ok)">green</span> highlight marks whichever slot is
+        actually active on the device right now. Nothing here starts heating remotely —
+        that's deliberately reserved for Quick Set; see the editor below.</div>
+
+      <div class="card-title" style="margin-top:24px">Editing: <span id="presetEditLabel">(tap a preset above)</span></div>
+      <div id="presetEditForm" class="hidden">
+        <div class="field-row">
+          <div>
+            <div class="field-label">Temperature <span class="field-value"><span id="presetEditTempVal">380</span>°</span></div>
+            <input type="range" id="presetEditTemp" min="300" max="460" value="380" aria-label="Preset temperature">
+          </div>
+          <div style="max-width:110px">
+            <div class="field-label">Duration (s)</div>
+            <input type="number" id="presetEditDuration" min="120" max="240" value="180" aria-label="Preset duration in seconds">
+          </div>
+        </div>
+        <div class="btn-row">
+          <button type="button" class="ok big" id="btnSavePreset" disabled style="flex:1">Save to slot</button>
+          <button type="button" class="big" id="btnSelectPreset" disabled style="flex:1">Select on device</button>
+        </div>
+        <div class="hint" id="presetEditHint"></div>
+        <div class="hint">Loads the slot's currently synced temp/duration — unlike the LED
+          and Screensaver panels, this one has real live readback (the
+          <code>0x55</code>/<code>0x33</code>/<code>0x44</code>/<code>0x22</code> sync
+          notifies), so what you see is the device's actual saved value, not just session
+          memory. Ranges shown are the real confirmed per-mode, per-device limits (not the
+          wire's loose 1-byte 0-255s ceiling) — they change with the preset's mode and the
+          Device model selector in the header. "Save to slot" writes all 5 slots of that
+          mode's table (<code>0x88</code> flower / <code>0x66</code> concentrate) with only
+          this slot changed, echoing the other 4 from the synced table. "Select on device"
+          marks this slot as the active ranking via <code>0x11</code> (the same field the
+          physical hold-to-cycle button changes) — it does <strong>not</strong> start
+          heating; you'd still press the device's own button to actually begin a session
+          with it. Remote start-on-command is Quick Set's job alone.</div>
+      </div>
+    </div>
+
+    <div id="panelLed" class="panel-body hidden">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Preset slot</div>
+          <div class="segmented" id="ledRankSeg" data-value="1">
+            <button type="button" data-val="1" class="active">#1</button>
+            <button type="button" data-val="2">#2</button>
+            <button type="button" data-val="3">#3</button>
+            <button type="button" data-val="4">#4</button>
+            <button type="button" data-val="5">#5</button>
+          </div>
+        </div>
+      </div>
+      <div class="card-title" style="margin-top:4px">Colors (5-stop gradient — set all five the same for a solid color)</div>
+      <div class="color-row">
+        <div><input type="color" id="ledColor1" value="#ff0000" aria-label="Color stop 1"><span class="color-label">1</span></div>
+        <div><input type="color" id="ledColor2" value="#ff0000" aria-label="Color stop 2"><span class="color-label">2</span></div>
+        <div><input type="color" id="ledColor3" value="#ff0000" aria-label="Color stop 3"><span class="color-label">3</span></div>
+        <div><input type="color" id="ledColor4" value="#ff0000" aria-label="Color stop 4"><span class="color-label">4</span></div>
+        <div><input type="color" id="ledColor5" value="#ff0000" aria-label="Color stop 5"><span class="color-label">5</span></div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Glass top brightness <span class="field-value"><span id="ledGlassVal">10</span></span></div>
+          <input type="range" id="ledGlass" min="0" max="15" value="10" aria-label="Glass top brightness">
+        </div>
+        <div>
+          <div class="field-label">Base brightness <span class="field-value"><span id="ledBaseVal">10</span></span></div>
+          <input type="range" id="ledBase" min="0" max="15" value="10" aria-label="Base brightness">
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Pattern</div>
+          <select id="ledPattern" aria-label="LED animation pattern">
+            <option value="1">Rotate</option>
+            <option value="2">Fade Out</option>
+            <option value="3">Disco</option>
+            <option value="4">Blink</option>
+            <option value="5" selected>Static</option>
+          </select>
+        </div>
+        <div>
+          <div class="field-label">Pattern speed <span class="field-value"><span id="ledSpeedVal">0</span></span></div>
+          <input type="range" id="ledSpeed" min="0" max="15" value="0" aria-label="Pattern speed">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button type="button" class="ok big" id="btnSaveLed" disabled style="flex:1">Save LED preset</button>
+        <button type="button" class="big" id="btnSetActiveLed" disabled style="flex:1">Set as active</button>
+      </div>
+      <div class="hint">Colors and the byte layout are confirmed live (a solid-red rank-1
+        write round-tripped exactly through the device's ack). The two nibble-packed bytes
+        are also confirmed — traced directly to the official app's own preset-editing
+        screen: Glass Top/Base Brightness pack into one byte, Pattern/Pattern Speed into the
+        other, with pattern names read straight off the app's own labels. Brightness and
+        Pattern Speed aren't editable in the official app either (only Pattern is) — they
+        default here to 10/10/0, matching the factory-preset defaults seen in the source and
+        the values from an earlier live capture. "Set as active" writes the preset
+        selection via <code>0x11</code> byte[7], separate from editing a slot's colors.
+        Switching the preset slot above now reactively loads that slot's values — matching
+        how the official app re-seeds its own fields per preset. Traced the real app's own
+        code for this (line 264987-265149): it has no BLE query to read a slot's saved
+        colors either, only an in-session memory of what it last sent (reset every
+        connection) plus Firestore-sourced defaults we don't have access to — so this panel
+        does the same, an in-session-only cache reset on every connect/disconnect. The one
+        thing genuinely read live from the device is which slot is currently <em>active</em>
+        (highlighted <span style="color:var(--ok)">green</span> above, from the periodic
+        <code>0x99</code> state packet) — not what that slot's colors are.</div>
+    </div>
+
+    <div id="panelScreensaver" class="panel-body hidden">
+      <div class="warn-box">
+        ⚠ Confirmed working on real hardware. Keep this browser tab/window in the
+        <strong>foreground</strong> for the entire upload — backgrounding it (switching apps,
+        locking your screen, letting the display sleep) can throttle or suspend the page
+        mid-transfer, which is a likely cause of a corrupted/incomplete screensaver. The page
+        requests a screen wake lock automatically during upload, but that only keeps
+        <em>your</em> screen on — it can't stop the tab itself from being backgrounded. The
+        RGB565 encoding (big-endian, RGB not BGR) is now confirmed against the display
+        controller's own init sequence (MADCTL/COLMOD), not just the app's opaque native
+        converter — see <code>ble-protocol-notes.md</code>. This transport is shared with
+        firmware OTA — keep the raw log open and stop if anything looks off.
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Slot</div>
+          <div class="segmented" id="ssSlotSeg" data-value="1">
+            <button type="button" data-val="1" class="active">Primary</button>
+            <button type="button" data-val="2">Secondary</button>
+          </div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Image</div>
+          <input type="file" id="ssFileInput" accept="image/*" aria-label="Screensaver image">
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Or: solid test color (isolates the pixel format from crop/resize/JPEG — see ble-protocol-notes.md)</div>
+          <div class="btn-row" id="ssTestColorRow">
+            <button type="button" data-color="#ff0000" style="background:#ff0000">Red</button>
+            <button type="button" data-color="#00ff00" style="background:#00ff00">Green</button>
+            <button type="button" data-color="#0000ff" style="background:#0000ff;color:#fff">Blue</button>
+            <button type="button" data-color="#ffffff" style="background:#ffffff">White</button>
+            <button type="button" data-color="#000000" style="background:#000000;color:#fff">Black</button>
+          </div>
+        </div>
+      </div>
+      <canvas id="ssPreviewCanvas" width="240" height="240"></canvas>
+      <div class="btn-row">
+        <button type="button" class="ok big" id="btnUploadScreensaver" disabled style="flex:1">⬆ Upload to device</button>
+        <button type="button" class="danger big" id="btnEraseScreensaver" disabled style="flex:1">✕ Erase slot</button>
+      </div>
+      <div class="hint" id="ssProgress"></div>
+      <div class="card-title" style="margin-top:18px">Device status (0x82)</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-label">n[2] — Order</div><div class="stat-val" id="ssStat2">--</div></div>
+        <div class="stat"><div class="stat-label">n[3] — Time</div><div class="stat-val" id="ssStat3">--</div></div>
+        <div class="stat"><div class="stat-label">n[4] — ?</div><div class="stat-val" id="ssStat4">--</div></div>
+        <div class="stat"><div class="stat-label">n[5] — Slot 1</div><div class="stat-val" id="ssStat5">--</div></div>
+        <div class="stat"><div class="stat-label">n[6] — Slot 2</div><div class="stat-val" id="ssStat6">--</div></div>
+      </div>
+
+      <div class="card-title" style="margin-top:18px">0x80 (save/select) experiment</div>
+      <div class="warn-box">
+        Byte roles are now confirmed directly from the real app's own settings-save call site:
+        byte 2 is Order (1=Primary, 2=Secondary, 3=Primary&amp;Secondary, 4=Secondary&amp;Primary),
+        bytes 3 and 4 are both the cycle duration in seconds — the real app's UI always writes
+        the identical value to both together, never independently. A live test that sent them
+        mismatched left the official app's own Screen Savers settings screen unreachable until
+        the device was reset, so byte 3/4 are now locked together here and can't be sent apart.
+      </div>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="ss80ParamA">Order (byte 2)</label>
+          <input type="number" id="ss80ParamA" min="1" max="4" value="3" style="width:70px">
+        </div>
+        <div>
+          <label class="field-label" for="ss80ParamB">Seconds (bytes 3 &amp; 4)</label>
+          <input type="number" id="ss80ParamB" min="0" max="255" value="30" style="width:70px">
+        </div>
+      </div>
+      <div class="hint">Order is 1-4 (see above); Seconds is written identically to both byte 3
+        and byte 4, matching the real app exactly — there is no control here to desync them.
+        A status refresh (below) shows what the device reports back.</div>
+      <div class="btn-row">
+        <button type="button" id="btnSendScreensaverOrder" disabled>Send 0x80</button>
+        <button type="button" id="btnQueryScreensaverStatus" disabled>↻ Query status (0x81)</button>
+      </div>
+      <div class="hint">Picks an image, center-crops it square, resizes to 240×240, converts
+        to 16-bit RGB565, then streams it in 16-byte blocks over <code>0x74</code> — the same
+        block-write opcode firmware updates use, distinguished (as far as traced) by the fixed
+        sub-type byte in the <code>0x72</code> session-start header. Erase sends <code>0x83</code>
+        for the selected slot. See <code>ble-protocol-notes.md</code> for the full pipeline.
+        Switching the slot above now reactively loads that slot's picked image (or clears
+        the preview if nothing's been picked for it yet this session) instead of leaving the
+        other slot's image sitting there. Same limitation as the LED panel: there's no BLE
+        query to read a slot's actual saved image back, so this is in-session memory only,
+        reset on every connect. The <span style="color:var(--ok)">green</span> highlight on
+        a slot button and the Slot 1/2 status tiles below <em>are</em> read live from the
+        device (<code>0x82</code>) — they tell you whether a slot has something saved, just
+        not what it looks like.</div>
+    </div>
+
+    <div id="panelSettings" class="panel-body hidden">
+      <div class="field-row">
+        <div>
+          <div class="field-label">Temperature scale</div>
+          <div class="segmented" id="scaleSeg" data-value="F">
+            <button type="button" data-val="F" class="active">°F</button>
+            <button type="button" data-val="C">°C</button>
+          </div>
+        </div>
+        <div>
+          <div class="field-label">Low Power Mode</div>
+          <div class="segmented" id="lpmSeg" data-value="off">
+            <button type="button" data-val="on">On</button>
+            <button type="button" data-val="off" class="active">Off</button>
+          </div>
+        </div>
+      </div>
+      <div class="field-row">
+        <div>
+          <div class="field-label">Vibration level <span class="field-value"><span id="vibrationVal">0</span></span></div>
+          <input type="range" id="vibrationSlider" min="0" max="10" value="0" disabled aria-label="Vibration level">
+        </div>
+      </div>
+
+      <div class="card-title" style="margin-top:28px">0x11 byte[8] — device lock</div>
+      <div class="warn-box">
+        Confirmed, not an experiment anymore: this byte is a device-lock command (0x00
+        unlocks, 0xAF locks), traced from the real app's own lock-toggle button logic — not
+        a passive echo, and not related to charging (that was an earlier wrong guess). This
+        panel now auto-tracks the real confirmed state, <code>live.deviceLocked</code>, so it
+        should stay a true no-op in normal use. The manual override below still exists for
+        deliberately testing lock/unlock, but a mismatched send here is what previously left
+        a device unreachable from the official app until a full reset — use it with care.
+      </div>
+      <div class="field-row">
+        <div class="stat"><div class="stat-label">Currently sending</div><div class="stat-val" id="unknownFlagVal">0x00</div></div>
+        <div class="stat"><div class="stat-label">Device reports locked</div><div class="stat-val" id="unknownFlagCharging">--</div></div>
+      </div>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="unknownFlagInput">Override value (hex, 00 = unlock, AF = lock)</label>
+          <input type="text" id="unknownFlagInput" placeholder="AF" maxlength="2" style="width:80px;text-transform:uppercase">
+        </div>
+        <div style="align-self:end">
+          <button type="button" id="btnApplyUnknownFlag" disabled>Send settings with this value</button>
+        </div>
+      </div>
+      <label class="field-row" style="align-items:center;cursor:pointer">
+        <input type="checkbox" id="unknownFlagAutoTrack" checked style="width:auto">
+        <span>Auto-track real lock state (send 0xAF while locked, 0x00 otherwise) on every settings write</span>
+      </label>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="deviceTimeoutSel">Device timeout</label>
+          <select id="deviceTimeoutSel" aria-label="Device timeout">
+            <option value="60">1 min</option>
+            <option value="300" selected>5 min</option>
+            <option value="600">10 min</option>
+            <option value="900">15 min</option>
+            <option value="1800">30 min</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label" for="ledTimeoutSel">LED timeout</label>
+          <select id="ledTimeoutSel" aria-label="LED timeout">
+            <option value="60">1 min</option>
+            <option value="300" selected>5 min</option>
+            <option value="600">10 min</option>
+            <option value="900">15 min</option>
+            <option value="1800">30 min</option>
+          </select>
+        </div>
+      </div>
+      <button type="button" class="big" id="btnApplyTimeout" disabled>Apply timeout</button>
+
+      <div class="card-title" style="margin-top:22px">Custom timeout / "never sleep" test</div>
+      <div class="warn-box">
+        The dropdowns above only offer the 5 choices the real app's own UI exposes — the wire
+        command itself is a plain 16-bit field per value, so the device may accept values
+        outside that range even though the app never sends them. Testing here, not assuming.
+        Fill either field below to override the matching dropdown when you hit Apply above.
+        <strong>Sleep time (live)</strong>: <span id="sleepTestReadout">--</span> — watch this
+        after applying a custom value to see what the device actually does with it.
+      </div>
+      <div class="field-row">
+        <div>
+          <label class="field-label" for="deviceTimeoutCustom">Custom device timeout (s)</label>
+          <input type="number" id="deviceTimeoutCustom" min="0" placeholder="e.g. 0 or 65535" style="width:140px">
+        </div>
+        <div>
+          <label class="field-label" for="ledTimeoutCustom">Custom LED timeout (s)</label>
+          <input type="number" id="ledTimeoutCustom" min="0" placeholder="e.g. 0 or 65535" style="width:140px">
+        </div>
+      </div>
+      <div class="btn-row">
+        <button type="button" id="btnTryTimeoutZero" disabled>Try 0 (disabled?)</button>
+        <button type="button" id="btnTryTimeoutMax" disabled>Try 65535 (max?)</button>
+      </div>
+      <div class="hint">Scale and Low Power Mode apply immediately (<code>0x11</code>),
+        matching the confirmed byte layout in <code>ble-protocol-notes.md</code>. Vibration
+        applies when you release the slider. Device/LED timeout is a separate command
+        (<code>0xD1</code>, 7 bytes, two independent 2-byte fields) — the fields are
+        confirmed distinct on real hardware, but which one is "device" vs "LED" is only
+        inferred from setter naming in the source, not proven by a live test. Treat this
+        one control as best-effort until confirmed.</div>
+
+      <div class="card-title" style="margin-top:28px">Factory reset</div>
+      <button type="button" class="danger big" id="btnFactoryReset" disabled>⚠ Factory reset device</button>
+      <div class="hint">Sends <code>0xAE 0x04 0xAE 0xAE</code> — confirmed via the real
+        app's source (line ~282684) as the actual device-side factory reset trigger. This
+        resets saved presets, LED settings, and (very likely) screensaver slots. Note: the
+        real app also resets settings server-side (Firestore) <em>before</em> sending this
+        BLE command — this button only does the on-device half, so it may not clear any
+        app-side cached state.</div>
+    </div>
+
+    <div id="panelDiag" class="panel-body hidden">
+      <div class="card-title" style="margin-top:0">Device state</div>
+      <div class="stat-grid" style="margin-bottom:18px">
+        <div class="stat"><div class="stat-label">Atomizer</div><div class="stat-val" id="diagAtomizer">--</div></div>
+        <div class="stat"><div class="stat-label">Resistance</div><div class="stat-val" id="diagOhms">--</div></div>
+        <div class="stat"><div class="stat-label">Locked</div><div class="stat-val" id="diagLocked">--</div></div>
+        <div class="stat"><div class="stat-label">Charging</div><div class="stat-val" id="diagCharging">--</div></div>
+        <div class="stat"><div class="stat-label">Screen brightness</div><div class="stat-val" id="diagBrightness">--</div></div>
+        <div class="stat"><div class="stat-label">Active LED preset</div><div class="stat-val" id="diagLedRank">--</div></div>
+      </div>
+      <div class="card-title">Live telemetry (0xDD)</div>
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-label">NTC temp</div><div class="stat-val" id="diagNtc">--</div></div>
+        <div class="stat"><div class="stat-label">TCR temp</div><div class="stat-val" id="diagTcr">--</div></div>
+        <div class="stat"><div class="stat-label">Power output</div><div class="stat-val" id="diagPower">--</div></div>
+        <div class="stat"><div class="stat-label">Set temp reached</div><div class="stat-val" id="diagReached">--</div></div>
+        <div class="stat"><div class="stat-label">PID Kt</div><div class="stat-val" id="diagKt">--</div></div>
+        <div class="stat"><div class="stat-label">PID Kp</div><div class="stat-val" id="diagKp">--</div></div>
+        <div class="stat"><div class="stat-label">PID Ki</div><div class="stat-val" id="diagKi">--</div></div>
+        <div class="stat"><div class="stat-label">PID Kd</div><div class="stat-val" id="diagKd">--</div></div>
+      </div>
+      <div class="card-title" style="margin-top:18px">Live chart — last 60s (NTC vs TCR)</div>
+      <svg id="diagSvg" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
+      <div class="hint">This is the same live PID/telemetry feed behind Focus V's own
+        internal "Real-Time Results" screen, which their production app hides behind a
+        build-profile flag — see <code>ble-protocol-notes.md</code>. Their "Legacy Mode"
+        indicator is deliberately not reproduced here: it's driven by
+        <code>devicePowerLevelPidStatus</code>, which has zero write call sites anywhere in
+        the official bundle — it's always its default value in the real app too, so
+        showing it here would be fake data, not a real device read. Unlike the ramp curve,
+        this chart updates during any active session, not just while a ramp is running.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Session</div>
+    <div class="btn-row">
+      <button type="button" class="danger" id="btnStop" disabled>■ Stop session</button>
+      <button type="button" class="danger" id="btnPowerOff" disabled>⏻ Power off</button>
+    </div>
+  </div>
+
+  <details>
+    <summary>Advanced — raw traffic log <span class="export-link" id="btnExportLog">Export .txt</span></summary>
+    <div class="checkbox-row" style="margin-top:10px; margin-bottom:0;">
+      <input type="checkbox" id="logMuteNoisy" checked>
+      <label for="logMuteNoisy">Hide high-frequency telemetry (<code>0x99</code> / <code>0xDD</code>) from this log</label>
+    </div>
+    <div id="log"></div>
+  </details>
+
+</main>
+
+<script>
+const SERVICE = '1011123e-8535-b5a0-7140-a304d2495cb7';
+const READ_CHAR = '1011123e-8535-b5a0-7140-a304d2495cb8';
+const WRITE_CHAR = '1011123e-8535-b5a0-7140-a304d2495cb9';
+const STORAGE_KEY = 'focusv-controller-settings-v1';
+
+let device = null, server = null, readChar = null, writeChar = null;
+let rampTimer = null;
+let settingsSynced = false;   // only push device state into Settings-tab controls once per connection, so we don't fight a mid-drag user edit
+let lastAppliedScale = null;  // only re-range the temp inputs when the unit actually changes
+let lastUnknownFlag = 0;      // 0x11 byte[8] — every real call site just echoes this unchanged; no known source to read it from, so we track our own last-sent value
+let wakeLock = null;
+
+// live state tracked off the 0x99/0xCE/0xDD notify streams — see ble-protocol-notes.md
+const live = {
+  scale: 17,          // 17=F, 34=C
+  flowerRank: 0,
+  concRank: 0,
+  flowerSetTemp: 0,
+  concSetTemp: 0,
+  flowerSetDuration: 0,
+  concSetDuration: 0,
+  battery: null,
+  sleepIn: null,
+  atomizerRaw: null,     // 0x99 byte[2] — flower/concentrate + atomizer generation
+  measuredTemp: 0,        // 0x99 byte[6-7] — confirmed live temperature via real-dab capture
+  sessionUnderway: false, // 0x99 byte[5] — confirmed session-active flag
+  ledPresetRank: null,    // 0x99 byte[13] hi nibble — active LED preset (1-5, 0=none)
+  screenBrightness: null, // 0x99 byte[13] lo nibble — 0-15
+  deviceLocked: false,    // 0x99 byte[16] hi nibble
+  charging: false,        // 0x99 byte[16] lo nibble
+  vibrationLevel: 0,      // 0x99 byte[17] hi nibble — 0-10
+  lpm: 0,                 // 0x99 byte[17] lo nibble — Low Power Mode
+  flowerOhms: null,       // 0xCE — atomizer resistance
+  concOhms: null,
+  ntcTemp: null,          // 0xDD — thermistor temperature (native °C, converted for display)
+  tcrTemp: null,          // 0xDD — TCR-derived temperature, 'new'/'max' atomizers only
+  powerOutput: null,      // 0xDD — live power output
+  pidKt: null, pidKp: null, pidKi: null, pidKd: null, // 0xDD — live PID gains
+  setTempReached: null,   // 0xDD byte[2]
+  flowerPresetsF: null, concPresetsF: null, // 5-slot preset tables, °F (0x55/0x33 sync)
+  flowerPresetsC: null, concPresetsC: null, // same, °C (0x44/0x22 sync)
+  ssSlot1Active: null, ssSlot2Active: null, // 0x82 n[5]/n[6] — slot has a screensaver saved
+  ssOrder: null,       // 0x82 n[2] — 1=Primary,2=Secondary,3=Primary&Secondary,4=Secondary&Primary
+  ssTime: null,        // 0x82 n[3] — screensaver display duration, seconds
+};
+
+let rampStartTime = null;
+let measuredSamples = [];
+let commandedSamples = [];
+let diagSamples = [];
+// Default curve tuned for concentrate: drop the dab around 275°F (midpoint of a
+// 250-300°F load), ramp up to the usual 460°F finishing temp, then push further to
+// 485°F as an optional clean-off stage for atomizers that need it.
+// Default ramp mode is concentrate (365-635°F confirmed range for Quantum/Sport — see
+// DEVICE_LIMITS), so these seed waypoints need to actually fall within it. The old defaults
+// (275/460/485) started below the real concentrate minimum.
+let waypoints = [{ temp: 400, t: 0 }, { temp: 500, t: 20 }, { temp: 550, t: 35 }];
+
+// Named ramp presets — save the current ramp setup into a slot, then start/stop it with
+// one tap instead of re-editing waypoints every session.
+let rampPresets = { A: null, B: null };
+let activeRampPreset = null; // 'A' | 'B' | null — which slot (if any) started the running ramp
+
+const $ = id => document.getElementById(id);
+const dot = $('dot'), statusText = $('statusText'), deviceInfo = $('deviceInfo');
+const btnConnect = $('btnConnect'), btnDisconnect = $('btnDisconnect'), btnReconnect = $('btnReconnect');
+const btnStop = $('btnStop'), btnPowerOff = $('btnPowerOff');
+const btnManSet = $('btnManSet'), btnRampStart = $('btnRampStart'), btnRampStop = $('btnRampStop');
+const logEl = $('log');
+
+if (!navigator.bluetooth) {
+  statusText.textContent = 'Web Bluetooth unavailable — use desktop Chrome/Edge, Android Chrome, or on iOS a Web Bluetooth-capable browser like Bluefy/WebBLE';
+  btnConnect.disabled = true;
+}
+
+// ---- Segmented controls & tabs (pure UI state, no protocol logic here) ----
+function initSegmented(id) {
+  const root = $(id);
+  root.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-val]');
+    if (!btn) return;
+    root.dataset.value = btn.dataset.val;
+    root.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+  });
+}
+function setSegmented(id, val) {
+  const root = $(id);
+  root.dataset.value = val;
+  root.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.val === val));
+}
+const segValue = id => $(id).dataset.value;
+initSegmented('manModeSeg');
+initSegmented('rampModeSeg');
+initSegmented('scaleSeg');
+initSegmented('lpmSeg');
+initSegmented('ledRankSeg');
+
+function initTabs() {
+  const tabs = document.querySelectorAll('.tabs button[data-tab]');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.panel-body').forEach(p => p.classList.toggle('hidden', p.id !== tab.dataset.tab));
+      // 0x82 is request/response, not a periodic broadcast like 0x99 — refresh on every
+      // visit to this tab so the slot-active indicator/Order/Time reflect anything changed
+      // from the phone app since we last looked, not just whatever was true at connect time.
+      if (tab.dataset.tab === 'panelScreensaver') queryScreensaverStatus();
+    });
+  });
+}
+initTabs();
+
+// ---- Device model scoping ----
+// Confirmed by tracing the real app's own Settings screen source: the "Screen Savers" menu
+// entry only renders when deviceChosenType === 'QUANTUM' (line 261464-261498) — Aeris and
+// Sport don't get this feature at all, a real firmware/hardware capability gap the app
+// itself respects, not something this controller was missing. The 30-minute device/LED
+// timeout option is Quantum-only too (line 261844-261858, 261999-262014); Aeris/Sport cap
+// out at 15 minutes. Everything else in that settings screen is gated at the whole
+// Quantum/Aeris/Sport family level (vs. the unrelated legacy Carta protocol), so nothing
+// else needs scoping here.
+//
+// There is no BLE-based way to know which of the three a connected device actually is (see
+// "Device type" in ble-protocol-notes.md) — the real app only knows because the user picked
+// it once on a "SelectDevice" screen, synced to their cloud account. This does the same
+// thing locally: a manual selector, persisted in localStorage, defaulting to Quantum since
+// that's the superset (every Aeris/Sport feature is a subset of it) and what this
+// controller has actually been tested against.
+function applyDeviceModelScope() {
+  const isQuantum = $('deviceModelSel').value === 'QUANTUM';
+
+  const ssTab = document.querySelector('.tabs button[data-tab="panelScreensaver"]');
+  ssTab.style.display = isQuantum ? '' : 'none';
+  // If Screensaver was the active tab and the model just changed out from under it, don't
+  // leave a hidden tab's panel showing with no visible way to navigate off it.
+  if (!isQuantum && !$('panelScreensaver').classList.contains('hidden')) {
+    document.querySelector('.tabs button[data-tab="panelQuick"]').click();
+  }
+
+  // Hide (don't remove) the Quantum-only 30-min option so a previously-saved 1800s choice
+  // isn't silently lost if the user switches models back and forth.
+  ['deviceTimeoutSel', 'ledTimeoutSel'].forEach(id => {
+    const sel = $(id);
+    const opt1800 = sel.querySelector('option[value="1800"]');
+    opt1800.hidden = !isQuantum;
+    if (!isQuantum && sel.value === '1800') sel.value = '900'; // fall back to 15 min, the shared family's max
+  });
+}
+$('deviceModelSel').addEventListener('change', () => { applyDeviceModelScope(); applyScaleUI(); loadPresetEditorForm(); saveSettingsToStorage(); });
+
+function initSlider(sliderId, labelId) {
+  const slider = $(sliderId), label = $(labelId);
+  slider.addEventListener('input', () => label.textContent = slider.value);
+}
+initSlider('manTempSlider', 'manTempVal');
+['ledGlass', 'ledBase', 'ledSpeed'].forEach(id => initSlider(id, id + 'Val'));
+
+function hex(bytes) { return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' '); }
+function to16(v) { v = Math.max(0, Math.min(65535, Math.round(v))); return [ (v >> 8) & 0xFF, v & 0xFF ]; }
+function to24(v) { v = Math.max(0, Math.min(0xFFFFFF, Math.round(v))); return [ (v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF ]; }
+
+// RX opcodes that fire continuously during any active session — muted from the log by
+// default (checkbox in the Advanced section) so real events don't get buried. Muting only
+// affects the log display; state processing above the log() call always still runs.
+const NOISY_RX_OPCODES = new Set([0x99, 0xDD]);
+
+function log(dir, bytes, note, opcode) {
+  if (dir === 'RX' && opcode != null && NOISY_RX_OPCODES.has(opcode) && $('logMuteNoisy').checked) return;
+  const t = new Date().toLocaleTimeString([], { hour12: false });
+  const div = document.createElement('div');
+  div.textContent = `${t} ${dir} ${hex(bytes)}${note ? '  — ' + note : ''}`;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function showToast(message) {
+  const container = $('toastContainer');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = message;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
+// ---- Write queue ----
+// Web Bluetooth only allows one GATT operation on a characteristic at a time — overlapping
+// writeValue() calls (e.g. a ramp tick firing while a settings change is in flight) throw
+// "GATT operation already in progress" and silently drop one of them. Every write in this
+// app goes through writeCmd() so they're strictly serialized. A failed write still rejects
+// normally for its own caller (so existing try/catch blocks keep working) — only the
+// internal chain is protected from getting stuck on one failure. Failures also surface as
+// a toast, not just a line in a log panel that's collapsed by default.
+let writeChain = Promise.resolve();
+function writeCmd(cmd, note) {
+  const run = async () => {
+    await writeChar.writeValue(cmd.buffer);
+    log('TX', cmd, note);
+  };
+  const result = writeChain.then(run, run);
+  result.catch(e => showToast(`Write failed${note ? ' (' + note + ')' : ''}: ${e.message}`));
+  writeChain = result.catch(() => {});
+  return result;
+}
+
+function describeAtomizer(code) {
+  switch (code) {
+    case 0xA0: return '🌸 Flower';
+    case 0x60: case 0x50: return '🟣 Concentrate (old)';
+    case 0x40: return '🟣 Concentrate (new)';
+    case 0x30: return '🟣 Concentrate (max)';
+    case 0x00: return '— None loaded';
+    default: return code == null ? '--' : `Unknown (0x${code.toString(16)})`;
+  }
+}
+
+// ---- Wake Lock (keeps the screen from sleeping mid-ramp) ----
+// Without this, a backgrounded tab or a locked phone screen gets its setInterval throttled
+// by the browser (Chrome drops to roughly once a minute) — a running ramp would silently
+// stall or send a stale target very late. Only held while a ramp is actually running.
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (e) { /* permission denied or unsupported in this context — ramp still runs, just not protected */ }
+}
+async function releaseWakeLock() {
+  if (!wakeLock) return;
+  try { await wakeLock.release(); } catch (e) {}
+  wakeLock = null;
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && rampTimer && !wakeLock) acquireWakeLock();
+});
+
+// ---- localStorage persistence (per-viewer convenience, not device state) ----
+function saveSettingsToStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      manMode: segValue('manModeSeg'),
+      manTemp: $('manTempSlider').value,
+      manDuration: $('manDuration').value,
+      rampMode: segValue('rampModeSeg'),
+      waypoints,
+      rampStep: $('rampStep').value,
+      rampHold: $('rampHold').value,
+      rampClosedLoop: $('rampClosedLoop').checked,
+      rampNotify: $('rampNotify').checked,
+      rampPresets,
+      deviceModel: $('deviceModelSel').value,
+    }));
+  } catch (e) { /* storage unavailable/full — non-critical, just skip persisting */ }
+}
+function loadSettingsFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const s = JSON.parse(raw);
+    if (s.manMode) setSegmented('manModeSeg', s.manMode);
+    if (s.manTemp) { $('manTempSlider').value = s.manTemp; $('manTempVal').textContent = s.manTemp; }
+    if (s.manDuration) $('manDuration').value = s.manDuration;
+    if (s.rampMode) setSegmented('rampModeSeg', s.rampMode);
+    if (Array.isArray(s.waypoints) && s.waypoints.length >= 2) waypoints = s.waypoints;
+    if (s.rampStep) $('rampStep').value = s.rampStep;
+    if (s.rampHold) $('rampHold').value = s.rampHold;
+    if (s.rampClosedLoop) $('rampClosedLoop').checked = true;
+    if (s.rampNotify) $('rampNotify').checked = true;
+    if (s.rampPresets) rampPresets = s.rampPresets;
+    if (s.deviceModel) $('deviceModelSel').value = s.deviceModel;
+  } catch (e) { /* corrupted/unavailable storage — ignore, defaults stand */ }
+  applyDeviceModelScope();
+  applyScaleUI();
+}
+
+function setConnected(on) {
+  dot.classList.toggle('on', on);
+  statusText.textContent = on ? (device.name || device.id) : 'Not connected';
+  btnConnect.disabled = on;
+  btnDisconnect.disabled = !on;
+  btnStop.disabled = !on;
+  btnPowerOff.disabled = !on;
+  btnManSet.disabled = !on;
+  btnRampStart.disabled = !on;
+  $('btnRefreshPresets').disabled = !on;
+  $('vibrationSlider').disabled = !on;
+  $('btnApplyTimeout').disabled = !on;
+  $('btnFactoryReset').disabled = !on;
+  $('btnSaveLed').disabled = !on;
+  $('btnSetActiveLed').disabled = !on;
+  $('btnApplyUnknownFlag').disabled = !on;
+  $('btnSendScreensaverOrder').disabled = !on;
+  $('btnQueryScreensaverStatus').disabled = !on;
+  $('btnTryTimeoutZero').disabled = !on;
+  $('btnTryTimeoutMax').disabled = !on;
+  updateScreensaverButtons();
+  updatePresetEditorButtons();
+  renderRampPresets();
+  if (on) {
+    btnReconnect.style.display = 'none';
+  } else {
+    stopRampTimer(); // no connection left to send a device stop write to
+    settingsSynced = false;
+    live.flowerPresetsF = live.concPresetsF = live.flowerPresetsC = live.concPresetsC = null;
+    live.ledPresetRank = null;
+    diagSamples = [];
+    selectedPresetMode = null;
+    selectedPresetRank = null;
+    renderPresets();
+    resetLedPresetCache();
+    resetScreensaverSlotCache();
+    tryOfferReconnect();
+  }
+}
+
+function updateLiveStatusUI() {
+  const scaleC = live.scale === 34;
+  const unit = scaleC ? '°C' : '°F';
+  $('heroTempVal').textContent = live.measuredTemp;
+  $('heroTempUnit').textContent = unit;
+  $('statBattery').textContent = (live.battery ?? '--') + '%' + (live.charging ? ' ⚡' : '');
+  $('statSleep').textContent = live.sleepIn ? live.sleepIn + 's' : '—';
+  const sleepTestEl = $('sleepTestReadout');
+  if (sleepTestEl) sleepTestEl.textContent = live.sleepIn != null ? live.sleepIn + 's' : '--';
+  $('statFlower').textContent = live.flowerSetTemp + '°';
+  $('statFlowerSub').textContent = `${live.flowerSetDuration}s · rank ${live.flowerRank}`;
+  $('statConc').textContent = live.concSetTemp + '°';
+  $('statConcSub').textContent = `${live.concSetDuration}s · rank ${live.concRank}`;
+  $('statAtomizer').textContent = describeAtomizer(live.atomizerRaw);
+  const badge = $('sessionBadge');
+  badge.textContent = live.sessionUnderway ? '🔥 Heating' : '💤 Idle';
+  badge.classList.toggle('heating', live.sessionUnderway);
+}
+
+function updateDiagnosticsUI() {
+  $('diagAtomizer').textContent = describeAtomizer(live.atomizerRaw);
+  $('diagOhms').textContent = (live.flowerOhms != null || live.concOhms != null)
+    ? `🌸${live.flowerOhms ?? '--'} · 🟣${live.concOhms ?? '--'}` : '--';
+  $('diagLocked').textContent = live.deviceLocked ? 'Yes' : 'No';
+  $('diagCharging').textContent = live.charging ? 'Yes' : 'No';
+  $('diagBrightness').textContent = live.screenBrightness != null ? live.screenBrightness + '/15' : '--';
+  $('diagLedRank').textContent = live.ledPresetRank ? '#' + live.ledPresetRank : 'None';
+  $('diagNtc').textContent = live.ntcTemp != null ? live.ntcTemp + '°' : '--';
+  $('diagTcr').textContent = live.tcrTemp != null ? live.tcrTemp + '°' : '--';
+  $('diagPower').textContent = live.powerOutput ?? '--';
+  $('diagReached').textContent = live.setTempReached == null ? '--' : (live.setTempReached ? 'Yes' : 'No');
+  $('diagKt').textContent = live.pidKt ?? '--';
+  $('diagKp').textContent = live.pidKp ?? '--';
+  $('diagKi').textContent = live.pidKi ?? '--';
+  $('diagKd').textContent = live.pidKd ?? '--';
+  const chEl = $('unknownFlagCharging');
+  if (chEl) chEl.textContent = live.deviceLocked == null ? '--' : (live.deviceLocked ? 'yes' : 'no');
+}
+
+function drawDiagChart() {
+  const svg = $('diagSvg');
+  const now = Date.now();
+  const windowMs = 60000;
+  const pts = diagSamples.filter(s => now - s.t <= windowMs);
+  const vals = pts.flatMap(s => [s.ntc, s.tcr]).filter(v => v != null);
+  if (pts.length < 2 || !vals.length) {
+    svg.innerHTML = '<text x="10" y="80" fill="#8b92a1" font-size="12">Waiting for live data…</text>';
+    return;
+  }
+  const minT = Math.min(...vals) - 10, maxT = Math.max(...vals) + 10;
+  const x = t => ((t - (now - windowMs)) / windowMs) * 600;
+  const y = v => 150 - ((v - minT) / (maxT - minT || 1)) * 130 - 10;
+  const ntcPts = pts.filter(s => s.ntc != null);
+  const tcrPts = pts.filter(s => s.tcr != null);
+  const ntcPath = ntcPts.length > 1 ? 'M ' + ntcPts.map(s => `${x(s.t)} ${y(s.ntc)}`).join(' L ') : '';
+  const tcrPath = tcrPts.length > 1 ? 'M ' + tcrPts.map(s => `${x(s.t)} ${y(s.tcr)}`).join(' L ') : '';
+  svg.innerHTML = `
+    ${ntcPath ? `<path d="${ntcPath}" fill="none" stroke="#ffb454" stroke-width="2"/>` : ''}
+    ${tcrPath ? `<path d="${tcrPath}" fill="none" stroke="#5b9dff" stroke-width="2" stroke-dasharray="4,3"/>` : ''}
+    <text x="490" y="16" fill="#ffb454" font-size="11">— NTC</text>
+    <text x="490" y="30" fill="#5b9dff" font-size="11">- - TCR</text>
+  `;
+}
+
+// Confirmed directly from the real app's source (line 234914-234955, the exported
+// `quantum`/`aeris`/`sportAtomizerMin/MaxFlower/ConcentrateTemp_F` and
+// `Min/MaxSessionLength_Flower/Concentrate` constants) — exact, per-device, per-mode
+// bounds. Previously this controller used one shared 150-700°F range for everything,
+// which was wrong: flower and concentrate have different real ranges, and Aeris's
+// concentrate range/session cap is narrower than Quantum/Sport's. The app's own `_C`
+// (Celsius) constants are literal empty strings in the source — an apparent gap in the app
+// itself, not something worth replicating — so °C bounds here are derived from the
+// confirmed °F ones via standard conversion instead.
+const DEVICE_LIMITS = {
+  QUANTUM: { flowerTempF: [300, 460], concTempF: [365, 635], flowerDur: [120, 240], concDur: [20, 120] },
+  SPORT:   { flowerTempF: [300, 460], concTempF: [365, 635], flowerDur: [120, 240], concDur: [20, 120] },
+  AERIS:   { flowerTempF: [300, 460], concTempF: [365, 600], flowerDur: [120, 240], concDur: [20, 60] },
+};
+function fToC(f) { return Math.round((f - 32) * 5 / 9); }
+function currentDeviceLimits() {
+  return DEVICE_LIMITS[$('deviceModelSel').value] || DEVICE_LIMITS.QUANTUM;
+}
+function tempBounds(mode) {
+  const limits = currentDeviceLimits();
+  const [minF, maxF] = mode === 'concentrate' ? limits.concTempF : limits.flowerTempF;
+  const isC = live.scale === 34;
+  return isC ? { min: fToC(minF), max: fToC(maxF) } : { min: minF, max: maxF };
+}
+function durationBounds(mode) {
+  const limits = currentDeviceLimits();
+  const [min, max] = mode === 'concentrate' ? limits.concDur : limits.flowerDur;
+  return { min, max };
+}
+function clampToBounds(v, b) { return Math.min(b.max, Math.max(b.min, v)); }
+
+// Re-ranges the Quick Set temp/duration inputs and waypoint temp inputs for the current
+// mode + unit + device model — called on scale change, mode change, and device-model
+// change, so it doesn't fight an in-progress edit at any other time.
+function applyScaleUI() {
+  const mode = segValue('manModeSeg');
+  const tb = tempBounds(mode), db = durationBounds(mode);
+  const el = $('manTempSlider');
+  // 1° step, not 5 — the wire format (to16()) is a plain integer with no inherent
+  // quantization, and no evidence in the app's own source of a coarser step for
+  // Quantum/Aeris/Sport (that pattern only exists for Carta's fixed lookup-table stepping).
+  el.min = tb.min; el.max = tb.max; el.step = 1;
+  if (parseFloat(el.value) < tb.min) el.value = tb.min;
+  if (parseFloat(el.value) > tb.max) el.value = tb.max;
+  $('manTempVal').textContent = el.value;
+  const durEl = $('manDuration');
+  durEl.min = db.min; durEl.max = db.max;
+  if (parseFloat(durEl.value) < db.min) durEl.value = db.min;
+  if (parseFloat(durEl.value) > db.max) durEl.value = db.max;
+  renderWaypoints();
+}
+
+// Pushes current device state into the Settings tab controls — only on the first sync of
+// a connection, so we don't yank the slider out from under someone actively adjusting it.
+function syncSettingsUI() {
+  const isC = live.scale === 34;
+  setSegmented('scaleSeg', isC ? 'C' : 'F');
+  setSegmented('lpmSeg', (live.lpm ?? 0) > 0 ? 'on' : 'off');
+  $('vibrationSlider').value = live.vibrationLevel || 0;
+  $('vibrationVal').textContent = live.vibrationLevel || 0;
+}
+
+function parsePresetTable(n) {
+  const slots = [];
+  for (let i = 0; i < 5; i++) {
+    const base = 2 + i * 3;
+    slots.push({ temp: 256 * n[base] + n[base + 1], duration: n[base + 2] });
+  }
+  return slots;
+}
+
+function renderPresetGroup(containerId, slots, mode, activeRank) {
+  const el = $(containerId);
+  if (!slots) { el.innerHTML = '<div class="hint">Waiting for device to sync preset table…</div>'; return; }
+  el.innerHTML = slots.map((s, i) => {
+    const classes = ['preset-btn'];
+    if (activeRank === i + 1) classes.push('device-active');
+    if (selectedPresetMode === mode && selectedPresetRank === i + 1) classes.push('selected');
+    return `
+    <button type="button" class="${classes.join(' ')}" data-mode="${mode}" data-rank="${i + 1}" data-temp="${s.temp}" data-dur="${s.duration}">
+      <div class="preset-rank">#${i + 1}</div>
+      <div class="preset-temp">${s.temp}°</div>
+      <div class="preset-dur">${s.duration}s</div>
+    </button>
+  `;
+  }).join('');
+}
+
+function renderPresets() {
+  const isC = live.scale === 34;
+  renderPresetGroup('flowerPresetGrid', isC ? live.flowerPresetsC : live.flowerPresetsF, 'flower', live.flowerRank);
+  renderPresetGroup('concPresetGrid', isC ? live.concPresetsC : live.concPresetsF, 'concentrate', live.concRank);
+  loadPresetEditorForm();
+}
+
+function onNotify(event) {
+  const n = new Uint8Array(event.target.value.buffer);
+  const op = n[0];
+  let note = '';
+  if (op === 0x99 && n.length === 20 && (n[3] === 0x11 || n[3] === 0x22) && n[19] === 0x99) {
+    live.scale = n[3];
+    live.flowerRank = (n[4] >> 4) & 0xF;
+    live.concRank = n[4] & 0xF;
+    live.flowerSetTemp = 256 * n[8] + n[9];
+    live.concSetTemp = 256 * n[10] + n[11];
+    live.battery = n[12];
+    live.flowerSetDuration = n[14];
+    live.concSetDuration = n[15];
+    // Raw byte is NOT seconds directly — confirmed from the app's own "Sleep Mode: powers
+    // off in N seconds" alert logic (line 283554-283557): L = 2.5 * byte18, then truncated
+    // to an integer. Using the raw byte alone (as this previously did) understated the real
+    // countdown by a factor of 2.5x.
+    live.sleepIn = Math.trunc(2.5 * n[18]);
+    live.atomizerRaw = n[2];
+    live.measuredTemp = 256 * n[6] + n[7];
+    live.sessionUnderway = n[5] > 0;
+    live.ledPresetRank = (n[13] >> 4) & 0xF;
+    live.screenBrightness = n[13] & 0xF;
+    live.deviceLocked = ((n[16] >> 4) & 0xF) > 0;
+    live.charging = (n[16] & 0xF) > 0;
+    live.vibrationLevel = (n[17] >> 4) & 0xF;
+    live.lpm = n[17] & 0xF;
+
+    updateLiveStatusUI();
+    updateDiagnosticsUI();
+    updateLedActiveIndicator();
+    renderPresets();
+
+    if (live.scale !== lastAppliedScale) {
+      applyScaleUI();
+      lastAppliedScale = live.scale;
+    }
+    if (!settingsSynced) {
+      syncSettingsUI();
+      settingsSynced = true;
+    }
+    if (rampStartTime !== null) {
+      measuredSamples.push({ t: (Date.now() - rampStartTime) / 1000, temp: live.measuredTemp });
+    }
+    note = `0x99 state — battery=${n[12]}% measured=${live.measuredTemp}° underway=${live.sessionUnderway} flowerSet=${live.flowerSetTemp} concSet=${live.concSetTemp} sleepIn=${live.sleepIn}s | flowerRank=${live.flowerRank} concRank=${live.concRank} lpm=${live.lpm} locked=${live.deviceLocked} charging=${live.charging} screenBright=${live.screenBrightness} ledRank=${live.ledPresetRank} vib=${live.vibrationLevel}`;
+  } else if (op === 0xAA && n.length === 19 && n[18] === 0xAA) {
+    note = `0xAA telemetry (dab counters) — bytes[2-3]=${256 * n[2] + n[3]} bytes[4-5]=${256 * n[4] + n[5]}`;
+  } else if (op === 0xCE && n.length === 7 && n[6] === 0xCE) {
+    live.flowerOhms = 256 * n[2] + n[3];
+    live.concOhms = 256 * n[4] + n[5];
+    updateDiagnosticsUI();
+    note = `atomizer ohms — flower=${live.flowerOhms} conc=${live.concOhms}`;
+  } else if (op === 0xDD && n.length >= 17 && n[1] === 0) {
+    // Live per-sample telemetry (not the raw session-log chunk branch, n[1]!==0 for that).
+    // Temps here are native Celsius from the device regardless of display unit — convert.
+    const isC = live.scale === 34;
+    const toDisp = c => isC ? Math.round(c) : Math.round(1.8 * c + 32);
+    live.ntcTemp = toDisp(256 * n[3] + n[4]);
+    live.tcrTemp = toDisp(256 * n[5] + n[6]);
+    live.powerOutput = 256 * n[7] + n[8];
+    live.pidKt = 256 * n[9] + n[10];
+    live.pidKp = parseFloat(((256 * n[11] + n[12]) / 100).toFixed(2));
+    live.pidKi = parseFloat(((256 * n[13] + n[14]) / 100).toFixed(2));
+    live.pidKd = parseFloat(((256 * n[15] + n[16]) / 100).toFixed(2));
+    live.setTempReached = n[2] > 0;
+    updateDiagnosticsUI();
+    const now = Date.now();
+    diagSamples.push({ t: now, ntc: live.ntcTemp, tcr: live.tcrTemp });
+    diagSamples = diagSamples.filter(s => now - s.t <= 60000);
+    drawDiagChart();
+    note = `0xDD telemetry — NTC=${live.ntcTemp}° TCR=${live.tcrTemp}° power=${live.powerOutput} Kt=${live.pidKt} Kp=${live.pidKp} Ki=${live.pidKi} Kd=${live.pidKd}`;
+  } else if (op === 0xD2 && n.length === 7 && n[6] === 0xD2) {
+    note = `timeout ack — a=${256 * n[2] + n[3]} b=${256 * n[4] + n[5]}`;
+  } else if (LED_ACK_OPCODES[op] !== undefined && n.length === 20) {
+    // Full 20-byte echo, same shape as the save command itself — not a bare ack. Parse it
+    // and refresh the cache from the device's own response rather than only trusting what
+    // we sent, and update the form live if this is the rank currently shown.
+    const rank = LED_ACK_OPCODES[op];
+    const preset = {
+      glass: (n[2] >> 4) & 0xF, base: n[2] & 0xF,
+      pattern: (n[3] >> 4) & 0xF, speed: n[3] & 0xF,
+      colors: [[n[4],n[5],n[6]], [n[7],n[8],n[9]], [n[10],n[11],n[12]], [n[13],n[14],n[15]], [n[16],n[17],n[18]]],
+    };
+    ledPresetCache[rank] = preset;
+    if (parseInt(segValue('ledRankSeg'), 10) === rank) writeLedForm(preset);
+    note = `LED preset #${rank} saved ack`;
+    flashLedSaved();
+  } else if ((op === 0x55 || op === 0x33) && n.length === 18 && n[17] === op) {
+    const slots = parsePresetTable(n);
+    if (op === 0x55) live.flowerPresetsF = slots; else live.concPresetsF = slots;
+    renderPresets();
+    note = `${op === 0x55 ? 'flower' : 'concentrate'} preset table (°F) synced`;
+  } else if ((op === 0x44 || op === 0x22) && n.length === 18 && n[17] === op) {
+    const slots = parsePresetTable(n);
+    if (op === 0x44) live.flowerPresetsC = slots; else live.concPresetsC = slots;
+    renderPresets();
+    note = `${op === 0x44 ? 'flower' : 'concentrate'} preset table (°C) synced`;
+  } else if (op === 0x73 && n.length === 4 && n[1] === 0x04 && n[2] === 0x22 && n[3] === 0x73) {
+    // Session-ready ack — found by tracing the real app's ScreenSaver component: its
+    // block-send loop (`ht(0)`) is gated behind a `useEffect` that only fires once this
+    // exact packet arrives (`se && !Z && ht(0)`, triggered by `115===n[0]&&4===n[1]&&
+    // 34===n[2]&&115===n[3]` in its notify handler). The app never starts sending 0x74
+    // blocks after 0x72 on a fixed delay — it waits for the firmware to confirm it has
+    // actually entered screensaver-receive mode first. We had never handled or waited for
+    // this opcode at all, which would explain blocks being sent while the firmware is
+    // still in its pre-transfer state and silently dropping them (no blue screen, no save).
+    note = 'screensaver session ready (0x73) — firmware confirmed receive mode';
+    if (pendingSessionReadyAck) { const r = pendingSessionReadyAck; pendingSessionReadyAck = null; r(true); }
+  } else if (op === 0x75 && n.length === 6 && n[5] === 0x75) {
+    // Page-write ack from the device during a screensaver/OTA-style transfer — the real
+    // app waits for this after every 16 blocks (256 bytes = one SPI-NOR flash page) before
+    // sending the next batch; see the flow-control fix in uploadScreensaver().
+    note = 'transfer page ack (0x75)';
+    if (pendingPageAck) { const r = pendingPageAck; pendingPageAck = null; r(); }
+  } else if (op === 0x82 && n.length === 8 && n[7] === 0x82) {
+    // n[2]/n[3] confirmed: they feed React state (`Ye`/`ke`) that the real app's "Order"/
+    // "Time" picker uses with the exact values 1-4 (Primary/Secondary/Primary&Secondary/
+    // Secondary&Primary) and 15/30/60 (seconds) respectively — so these are the current
+    // Order and Time settings. n[5]/n[6] confirmed: they feed `we`/`Ie`, which directly
+    // gate the "Primary"/"Secondary" options in that same picker (disabled/greyed out when
+    // false) — i.e. whether slot 1/slot 2 actually has a screensaver saved. n[4] remains
+    // unmapped to any traced UI element. See ble-protocol-notes.md.
+    const ORDER_LABELS = { 1: 'Primary', 2: 'Secondary', 3: 'Primary & Secondary', 4: 'Secondary & Primary' };
+    live.ssOrder = n[2];
+    live.ssTime = n[3];
+    live.ssSlot1Active = n[5] > 0;
+    live.ssSlot2Active = n[6] > 0;
+    $('ssStat2').textContent = ORDER_LABELS[n[2]] ? `${n[2]} (${ORDER_LABELS[n[2]]})` : n[2];
+    $('ssStat3').textContent = n[3] ? `${n[3]} (${n[3]}s)` : n[3];
+    $('ssStat4').textContent = n[4];
+    $('ssStat5').textContent = n[5] ? `${n[5]} (slot 1 active)` : `${n[5]} (slot 1 empty)`;
+    $('ssStat6').textContent = n[6] ? `${n[6]} (slot 2 active)` : `${n[6]} (slot 2 empty)`;
+    updateScreensaverSlotIndicator();
+    note = `screensaver status — ${Array.from(n.slice(2, 7)).join(',')}`;
+    // Real app behavior, traced from source: its on-screen transfer-progress UI only
+    // becomes visible from *this* handler (a real 0x82 response arriving), not from
+    // sending the 0x81 query itself. Resolve the pre-transfer wait here instead of on a
+    // fixed timer, to actually synchronize with it instead of racing it.
+    if (pendingStatusAck) { const r = pendingStatusAck; pendingStatusAck = null; r(); }
+  }
+  log('RX', n, note, op);
+}
+
+async function triggerSync() {
+  if (!writeChar) return;
+  const now = new Date();
+  const yr = to16(now.getUTCFullYear());
+  const dateTime = new Uint8Array([0xDD, 0x0C, yr[0], yr[1], now.getUTCMonth() + 1,
+    now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), 0, 0, 0, 0xDD]);
+  await writeCmd(dateTime, 'sync trigger (date/time)');
+}
+
+// gatt.connect() resolving doesn't guarantee the connection is actually stable yet — a
+// known Chrome/Web Bluetooth race where the very next GATT call (getPrimaryService) can
+// throw "GATT Server is disconnected" even though connect() just succeeded. Retrying the
+// whole sequence a couple times, with a short pause, clears it in most cases; if it still
+// fails after retries the device is probably genuinely connected elsewhere (another tab,
+// ble-tester.html, or the official focusv.app) or out of range.
+async function connectGatt(retries = 2) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE);
+      readChar = await service.getCharacteristic(READ_CHAR);
+      writeChar = await service.getCharacteristic(WRITE_CHAR);
+      return;
+    } catch (e) {
+      if (attempt >= retries) throw e;
+      log('TX', [], `connect attempt ${attempt + 1} failed (${e.message}) — retrying`);
+      try { if (device.gatt.connected) device.gatt.disconnect(); } catch (e2) {}
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+}
+
+// Standard BLE SIG Device Information Service characteristics. NOTE: despite the name,
+// 0x2A24 (Model Number) does NOT answer "is this a Quantum/Carta 2, Aeris, Sport/Carta
+// Sport" — traced the real app's own code and confirmed there is no BLE-based way to tell
+// these apart at all. "Carta 2" and "Carta Sport" are just retail names for what the app
+// internally calls QUANTUM and SPORT (`Fe()`, line 145017; `ce()`, line 303765-303776) —
+// QUANTUM/AERIS/SPORT share identical GATT services, characteristics, and opcodes (see the
+// connect-flow branching, line 240511-240516), and 0x2A24 is defined in the app's UUID
+// table but never actually read anywhere in the whole bundle. The real app only knows which
+// one a given device is because the user picked it manually on a one-time "SelectDevice"
+// screen during pairing, with that choice stored in the user's cloud account — not on the
+// device, not advertised over BLE. So this reads Model Number for informational/debugging
+// value only; it can't resolve Quantum vs Sport, and neither can anything else over BLE.
+const DEVICE_INFO_CHARS = {
+  '00002a24-0000-1000-8000-00805f9b34fb': 'Model Number',
+  '00002a25-0000-1000-8000-00805f9b34fb': 'Serial Number',
+  '00002a26-0000-1000-8000-00805f9b34fb': 'Firmware Revision',
+  '00002a27-0000-1000-8000-00805f9b34fb': 'Hardware Revision',
+  '00002a28-0000-1000-8000-00805f9b34fb': 'Software Revision',
+  '00002a29-0000-1000-8000-00805f9b34fb': 'Manufacturer Name',
+};
+
+async function readDeviceInfo() {
+  try {
+    const svc = await device.gatt.getPrimaryService('device_information');
+    const results = [];
+    for (const [uuid, label] of Object.entries(DEVICE_INFO_CHARS)) {
+      try {
+        const ch = await svc.getCharacteristic(uuid);
+        const val = await ch.readValue();
+        const text = new TextDecoder().decode(val).replace(/\0+$/, '');
+        results.push(`${label}: ${text || '(empty)'}`);
+      } catch (e) {
+        // This specific characteristic isn't present on this device — expected for some,
+        // not an error worth surfacing per-characteristic.
+      }
+    }
+    if (results.length) {
+      log('TX', [], 'Device Information service — ' + results.join(' | '));
+    } else {
+      log('TX', [], 'Device Information service present but no characteristics readable (or all empty)');
+    }
+  } catch (e) {
+    log('TX', [], 'Device Information service not available on this device: ' + e.message);
+  }
+}
+
+async function connectToDevice(d) {
+  try {
+    device = d;
+    device.addEventListener('gattserverdisconnected', () => setConnected(false));
+    await connectGatt();
+    await readChar.startNotifications();
+    readChar.addEventListener('characteristicvaluechanged', onNotify);
+    deviceInfo.innerHTML = `<b>${device.name || '(unnamed)'}</b> · ${device.id}`;
+    setConnected(true);
+    readDeviceInfo(); // fire-and-forget — informational only, shouldn't block/fail the connect flow
+    queryScreensaverStatus(); // fire-and-forget — populates slot-active/order/time without waiting on the user to open that tab
+    await triggerSync(); // confirmed behavior: this write triggers a full state dump
+  } catch (e) {
+    statusText.textContent = 'Connect failed: ' + e.message;
+    log('TX', [], 'connect failed after retries: ' + e.message + ' — check no other tab/app (ble-tester.html, focusv.app) is already connected to this device');
+  }
+}
+
+async function connect() {
+  const options = {
+    filters: [{ services: [SERVICE] }, { services: ['0000180a-0000-1000-8000-00805f9b34fb'] }],
+    optionalServices: [SERVICE, 'device_information', 'battery_service', 'generic_access']
+  };
+  try {
+    const d = await navigator.bluetooth.requestDevice(options);
+    await connectToDevice(d);
+  } catch (e) {
+    statusText.textContent = 'Connect failed: ' + e.message;
+  }
+}
+
+async function disconnect() {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  setConnected(false);
+}
+
+// navigator.bluetooth.getDevices() is an experimental Chrome API that lists devices this
+// origin was already granted permission for — lets us offer a one-click reconnect instead
+// of the full requestDevice() picker every time the page reloads. Fails silently (and the
+// button just stays hidden) on browsers that don't support it, including iOS wrappers.
+async function tryOfferReconnect() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+  try {
+    const devices = await navigator.bluetooth.getDevices();
+    if (devices.length && !(device && device.gatt.connected)) {
+      const d = devices[devices.length - 1];
+      btnReconnect.textContent = `↻ Reconnect: ${d.name || d.id.slice(0, 8)}`;
+      btnReconnect.style.display = '';
+      btnReconnect.onclick = () => connectToDevice(d);
+    } else {
+      btnReconnect.style.display = 'none';
+    }
+  } catch (e) { /* ignore — experimental API */ }
+}
+
+// Builds the confirmed 0xCC set-temperature/start-warmup command, echoing the untouched
+// mode's current values from live state so it isn't disturbed. Byte[13]=0xA5 is the
+// warmup-trigger marker — traced directly to xl(), the handler behind the app's own
+// "Tap to warm up" button (line 283782-283826 in the source bundle). Both flower and
+// concentrate branches use 0xA5 here for Quantum/Aeris/Sport, regardless of mode — mode
+// is instead encoded by which byte-pair position holds the new target.
+//
+// This is the ONLY path that actually starts heating remotely, and it's used ONLY by Quick
+// Set. Presets deliberately do not fire this: selecting a preset (selectPresetOnDevice(),
+// via 0x11) marks it as active without starting anything, same as pressing the device's own
+// hold-to-cycle button — an actual session still has to be started deliberately, by hand on
+// the device, or via Quick Set. The ranking bytes here are always sent as 0 (custom target,
+// not a saved-slot selection) since nothing that reaches this function is a preset apply.
+//
+// `skipDurationClamp` exists for the ramp's per-tick writes: those deliberately use a short
+// duration as a fail-safe (stops heating on its own if the app crashes/disconnects
+// mid-ramp) that's well below the real confirmed session-length minimum — clamping it up to
+// that minimum would silently defeat the fail-safe. Temperature is always clamped
+// regardless, since going outside the real range isn't a deliberate design choice anywhere.
+function buildTempCommand(mode, targetTemp, targetDuration, skipDurationClamp = false) {
+  const scale = live.scale;
+  // Clamped here, not just via input min/max attributes — this is the single choke point
+  // every heat-triggering write (Quick Set, ramp ticks) funnels through, so it's the one
+  // place that actually guarantees an out-of-range value (typed directly into a number
+  // input, or a stale value from before a mode/model switch) can't reach the wire.
+  const tb = tempBounds(mode);
+  const T = to16(clampToBounds(targetTemp, tb));
+  const D = to16(skipDurationClamp ? Math.max(0, Math.round(targetDuration)) : clampToBounds(targetDuration, durationBounds(mode)));
+  const WARMUP_MARKER = 0xA5;
+  let bytes;
+  if (mode === 'flower') {
+    const otherT = to16(live.concSetTemp);
+    const otherD = to16(live.concSetDuration);
+    bytes = [0xCC, 0x10, T[0], T[1], otherT[0], otherT[1], scale, D[0], D[1],
+      otherD[0], otherD[1], 0, live.concRank, WARMUP_MARKER, 0, 0xCC];
+  } else {
+    const otherT = to16(live.flowerSetTemp);
+    const otherD = to16(live.flowerSetDuration);
+    bytes = [0xCC, 0x10, otherT[0], otherT[1], T[0], T[1], scale, otherD[0], otherD[1],
+      D[0], D[1], live.flowerRank, 0, WARMUP_MARKER, 0, 0xCC];
+  }
+  return new Uint8Array(bytes);
+}
+
+async function sendTemp(mode, temp, duration, skipDurationClamp = false) {
+  const cmd = buildTempCommand(mode, temp, duration, skipDurationClamp);
+  return writeCmd(cmd, `set ${mode} → ${temp}° for ${duration}s`);
+}
+
+async function stopSession() {
+  // Matches B(), the app's own "Cancel" handler (line 287328-287353): echoes both
+  // modes' live temp/duration/ranking and sets marker=0xAF to stop.
+  const fT = to16(live.flowerSetTemp), fD = to16(live.flowerSetDuration);
+  const cT = to16(live.concSetTemp), cD = to16(live.concSetDuration);
+  const cmd = new Uint8Array([0xCC, 0x10, fT[0], fT[1], cT[0], cT[1], live.scale,
+    fD[0], fD[1], cD[0], cD[1], live.flowerRank, live.concRank, 0xAF, 0, 0xCC]);
+  await writeCmd(cmd, 'stop session (Cancel)');
+  stopRampTimer();
+}
+
+async function powerOff() {
+  if (!confirm('Power off the device?')) return;
+  const cmd = new Uint8Array([0x11, 0x0C, 0xAF, live.scale, 0, 0, 0, 0, 0, 0, 0, 0x11]);
+  await writeCmd(cmd, 'power off');
+  stopRampTimer();
+}
+
+// ---- Settings (0x11 apply / 0xD1 timeout) ----
+
+// Full 0x11 byte layout per ble-protocol-notes.md. byte[8] is the device-lock command
+// (0x00 unlocks, 0xAF locks — confirmed from the real app's own toggle-button logic,
+// not a passive echo field), tracked via lastUnknownFlag. This used to auto-track
+// charging status here, which was wrong and left the device silently getting a lock/
+// unlock command it never asked for on every settings write — auto-track now mirrors
+// the confirmed-correct source, live.deviceLocked.
+async function sendSettings(overrides = {}) {
+  if (!writeChar) return;
+  if (overrides.unknownFlag !== undefined) {
+    lastUnknownFlag = overrides.unknownFlag;
+  } else if ($('unknownFlagAutoTrack')?.checked) {
+    lastUnknownFlag = live.deviceLocked ? 0xAF : 0x00;
+  }
+  updateUnknownFlagUI();
+  const scale = overrides.scale ?? live.scale ?? 0x11;
+  const lpmOn = overrides.lpm !== undefined ? overrides.lpm : ((live.lpm ?? 0) > 0 ? 1 : 0);
+  const vibration = overrides.vibration !== undefined ? overrides.vibration : (live.vibrationLevel ?? 0);
+  const ledRank = overrides.ledRank !== undefined ? overrides.ledRank : (live.ledPresetRank || 0);
+  const flowerRank = overrides.flowerRank !== undefined ? overrides.flowerRank : (live.flowerRank || 0);
+  const concRank = overrides.concRank !== undefined ? overrides.concRank : (live.concRank || 0);
+  const lpmCode = lpmOn ? 0x02 : 0x08;
+  const cmd = new Uint8Array([0x11, 0x0C, 0x00, scale, lpmCode,
+    flowerRank, concRank, ledRank,
+    lastUnknownFlag, vibration, lpmOn, 0x11]);
+  return writeCmd(cmd, `settings update (0x11) — byte[8]=0x${lastUnknownFlag.toString(16).padStart(2, '0').toUpperCase()}`);
+}
+function updateUnknownFlagUI() {
+  const el = $('unknownFlagVal');
+  if (el) el.textContent = '0x' + lastUnknownFlag.toString(16).padStart(2, '0').toUpperCase();
+}
+$('btnApplyUnknownFlag')?.addEventListener('click', () => {
+  const raw = ($('unknownFlagInput').value || '').trim();
+  const val = parseInt(raw, 16);
+  if (isNaN(val) || val < 0 || val > 255) { showToast('Enter a valid hex byte, 00-FF'); return; }
+  sendSettings({ unknownFlag: val });
+});
+async function applySettingsScale(scaleByte) { await sendSettings({ scale: scaleByte }); }
+async function applyLpm(on) { await sendSettings({ lpm: on ? 1 : 0 }); }
+async function applyVibration(level) { await sendSettings({ vibration: level }); }
+async function applyLedRank(rank) { await sendSettings({ ledRank: rank }); }
+// Sets which saved preset slot is "active" for a mode via 0x11 — the same ranking field the
+// device's own physical hold-to-cycle button changes (0x99 byte 4) — WITHOUT the 0xCC
+// warmup-trigger marker. Selecting a preset this way never starts heating: it just marks
+// which slot is ready, matching how a physical button press picks a slot without firing it
+// on its own. Deliberate remote start-on-command is Quick Set's job alone.
+async function selectPresetOnDevice(mode, rank) {
+  const overrides = mode === 'flower' ? { flowerRank: rank } : { concRank: rank };
+  await sendSettings(overrides);
+}
+
+async function sendTimeout(deviceTimeoutSec, ledTimeoutSec) {
+  if (!writeChar) return;
+  const a = to16(deviceTimeoutSec);
+  const b = to16(ledTimeoutSec);
+  const cmd = new Uint8Array([0xD1, 0x07, a[0], a[1], b[0], b[1], 0xD1]);
+  return writeCmd(cmd, `timeout write — a=${deviceTimeoutSec}s b=${ledTimeoutSec}s (field↔purpose mapping unconfirmed)`);
+}
+
+$('scaleSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-val]');
+  if (!btn || !writeChar) return;
+  applySettingsScale(btn.dataset.val === 'C' ? 0x22 : 0x11);
+});
+$('lpmSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-val]');
+  if (!btn || !writeChar) return;
+  applyLpm(btn.dataset.val === 'on');
+});
+$('vibrationSlider').addEventListener('input', () => $('vibrationVal').textContent = $('vibrationSlider').value);
+$('vibrationSlider').addEventListener('change', () => {
+  if (!writeChar) return;
+  applyVibration(parseInt($('vibrationSlider').value, 10));
+});
+$('btnApplyTimeout').addEventListener('click', () => {
+  const customDevice = $('deviceTimeoutCustom').value;
+  const customLed = $('ledTimeoutCustom').value;
+  const deviceSec = customDevice !== '' ? parseInt(customDevice, 10) : parseInt($('deviceTimeoutSel').value, 10);
+  const ledSec = customLed !== '' ? parseInt(customLed, 10) : parseInt($('ledTimeoutSel').value, 10);
+  sendTimeout(deviceSec, ledSec);
+});
+$('btnTryTimeoutZero').addEventListener('click', () => {
+  $('deviceTimeoutCustom').value = 0;
+  $('ledTimeoutCustom').value = 0;
+  sendTimeout(0, 0);
+});
+$('btnTryTimeoutMax').addEventListener('click', () => {
+  $('deviceTimeoutCustom').value = 65535;
+  $('ledTimeoutCustom').value = 65535;
+  sendTimeout(65535, 65535);
+});
+
+// ---- LED presets ----
+//
+// The real app has no BLE query to *read* a preset's saved colors/brightness/pattern —
+// traced its LED-preset editor (line 264987-265149) end to end: field values are seeded
+// from a Firestore document passed in as a route param (`M.presetColorOne` etc, line
+// 265050-265077), and `deviceLedPresets` (the app's local cache of what's in each of the 5
+// slots) gets reset to an empty array on every connect (`De([])`, line 240655) — it's only
+// ever populated *optimistically*, from the app's own outgoing save data (`st()`, line
+// 265127-265149, which builds both the write packet and a same-shaped "ack" entry and
+// caches the latter locally before the device has even responded). So "detecting current
+// settings" in the real app really means "remembering what this session itself sent," not
+// a live device readback — there's no more ground truth available over BLE than that.
+//
+// We replicate the same idea: an in-session cache per rank (reset on every connect/
+// disconnect, exactly like `deviceLedPresets`), reactively loaded into the form whenever
+// the rank selector changes (matching the real app re-seeding its fields whenever the
+// selected preset — `M` — changes), and updated on save. The one thing we do better than
+// the real app: the device's own 0xEA/0xE9/0xE8/0xE7/0xE6 save-ack notify (see onNotify)
+// echoes back the full 20-byte payload, not just a bare ack — we parse that and use it to
+// refresh the cache from the device's own response instead of only trusting our outgoing
+// copy, in case the device ever clamps/normalizes a value.
+
+const LED_OPCODES = { 1: 0xEE, 2: 0xE1, 3: 0xE2, 4: 0xE3, 5: 0xE4 };
+const LED_ACK_OPCODES = { 0xEA: 1, 0xE9: 2, 0xE8: 3, 0xE7: 4, 0xE6: 5 };
+
+function hexToRgb(hexStr) {
+  const v = parseInt(hexStr.slice(1), 16);
+  return [(v >> 16) & 0xFF, (v >> 8) & 0xFF, v & 0xFF];
+}
+function rgbToHex([r, g, b]) {
+  return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+// Matches the documented factory-default seed data (S=0xAA — glass/base both 10) and this
+// panel's own pre-existing HTML defaults (Static pattern, speed 0, all-red).
+function defaultLedPreset() {
+  return { glass: 10, base: 10, pattern: 5, speed: 0, colors: [[255,0,0],[255,0,0],[255,0,0],[255,0,0],[255,0,0]] };
+}
+let ledPresetCache = { 1: null, 2: null, 3: null, 4: null, 5: null };
+
+function readLedForm() {
+  return {
+    glass: parseInt($('ledGlass').value, 10),
+    base: parseInt($('ledBase').value, 10),
+    pattern: parseInt($('ledPattern').value, 10),
+    speed: parseInt($('ledSpeed').value, 10),
+    colors: [1, 2, 3, 4, 5].map(i => hexToRgb($(`ledColor${i}`).value)),
+  };
+}
+function writeLedForm(preset) {
+  $('ledGlass').value = preset.glass; $('ledGlassVal').textContent = preset.glass;
+  $('ledBase').value = preset.base; $('ledBaseVal').textContent = preset.base;
+  $('ledPattern').value = preset.pattern;
+  $('ledSpeed').value = preset.speed; $('ledSpeedVal').textContent = preset.speed;
+  preset.colors.forEach((c, i) => { $(`ledColor${i + 1}`).value = rgbToHex(c); });
+}
+// Reactive rank switching — loads that rank's last-known (this session) values into the
+// form, the way the real app's editor re-seeds its fields whenever the selected preset
+// changes, instead of leaving whatever was last displayed on screen.
+function loadLedRankIntoForm(rank) {
+  writeLedForm(ledPresetCache[rank] || defaultLedPreset());
+}
+function resetLedPresetCache() {
+  ledPresetCache = { 1: null, 2: null, 3: null, 4: null, 5: null };
+  loadLedRankIntoForm(parseInt(segValue('ledRankSeg'), 10));
+  updateLedActiveIndicator();
+}
+$('ledRankSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-val]');
+  if (btn) loadLedRankIntoForm(parseInt(btn.dataset.val, 10));
+});
+
+// Highlights whichever rank the device currently reports as active (0x99 byte 13 hi
+// nibble, `live.ledPresetRank`) — the one piece of genuinely live, device-sourced "current
+// setting" available for LED presets (as opposed to the cache above, which is just
+// session memory of what we sent).
+function updateLedActiveIndicator() {
+  $('ledRankSeg').querySelectorAll('button[data-val]').forEach(b => {
+    b.classList.toggle('device-active', live.ledPresetRank > 0 && parseInt(b.dataset.val, 10) === live.ledPresetRank);
+  });
+}
+
+function flashLedSaved() {
+  const btn = $('btnSaveLed');
+  if (btn.dataset.flashing) return;
+  btn.dataset.flashing = '1';
+  const old = btn.textContent;
+  btn.textContent = '✓ Saved';
+  setTimeout(() => { btn.textContent = old; delete btn.dataset.flashing; }, 1500);
+}
+async function saveLedPreset() {
+  if (!writeChar) return;
+  const rank = parseInt(segValue('ledRankSeg'), 10);
+  const opcode = LED_OPCODES[rank];
+  const form = readLedForm();
+  // S = Glass Top Brightness (hi) + Base Brightness (lo); P = Pattern (hi) + Pattern Speed
+  // (lo) — confirmed by tracing the official app's own preset-save call site (st(), source
+  // line 265127-265128), which packs these exact four fields the same way.
+  const S = ((form.glass & 0xF) << 4) | (form.base & 0xF);
+  const P = ((form.pattern & 0xF) << 4) | (form.speed & 0xF);
+  const bytes = [opcode, 0x14, S, P];
+  form.colors.forEach(c => bytes.push(...c));
+  bytes.push(opcode);
+  const cmd = new Uint8Array(bytes);
+  await writeCmd(cmd, `save LED preset #${rank}`);
+  // Optimistic local update, mirroring the real app's own `et.set(rank, b)` — the device's
+  // save-ack notify (below) will refresh this again from the device's own echoed bytes once
+  // it arrives, but there's no reason to wait on that just to remember what we just sent.
+  ledPresetCache[rank] = form;
+}
+$('btnSaveLed').addEventListener('click', saveLedPreset);
+$('btnSetActiveLed').addEventListener('click', () => {
+  if (!writeChar) return;
+  applyLedRank(parseInt(segValue('ledRankSeg'), 10));
+});
+
+// ---- Screensaver ----
+// Full pipeline traced from the official app (line 296162-296337, ble-protocol-notes.md):
+// pick -> center-crop square -> resize to 240x240 JPEG -> RGB565 pixel conversion ->
+// 0x72 session start -> repeated 16-byte 0x74 blocks -> 0x76 finish -> 0x81 status refresh.
+// RGB565 byte order (big-endian, RGB not BGR) is now CONFIRMED against the display
+// controller's own init sequence (MADCTL=0xC0, COLMOD=0x05 — see firmware-analysis-notes.md
+// and ble-protocol-notes.md), not just inferred from the app's opaque native converter.
+//
+// Same "no live BLE read" limitation as LED presets (see that section above for the full
+// trace): there is no opcode to query a slot's saved image back from the device, and the
+// real app's own local cache of "what's in each slot" is Firestore-thumbnail-backed, not a
+// BLE readback. So this panel does the same thing as the LED one: an in-session per-slot
+// cache, reactively loaded when the slot selector changes, plus a genuinely live indicator
+// (0x82's n[5]/n[6], see onNotify) for which slots actually have *something* saved, even
+// though we can't see what.
+
+initSegmented('ssSlotSeg');
+let ssPixelBytes = null;
+let ssSlotCache = { 1: null, 2: null }; // per-slot in-session pixel cache, keyed by slot number
+
+let screensaverBusy = false;
+
+function updateScreensaverButtons() {
+  const connected = !!(device && device.gatt && device.gatt.connected);
+  $('btnUploadScreensaver').disabled = !connected || !ssPixelBytes || screensaverBusy;
+  $('btnEraseScreensaver').disabled = !connected || screensaverBusy;
+  // Deliberately NOT gated on screensaverBusy — this is the recovery tool for a
+  // device stuck after a bad transfer, and if a hung writeValue() ever leaves
+  // that flag stuck true (it never gets cleared without the promise settling),
+  // gating the one recovery button on it would make recovery impossible without
+  // a page reload. Its own confirm() dialog is the safety gate instead.
+  const resetBtn = $('btnFactoryReset');
+  if (resetBtn) resetBtn.disabled = !connected;
+}
+
+function rgbaToRgb565(rgba) {
+  const out = new Uint8Array((rgba.length / 4) * 2);
+  let j = 0;
+  for (let i = 0; i < rgba.length; i += 4) {
+    const r = rgba[i] >> 3, g = rgba[i + 1] >> 2, b = rgba[i + 2] >> 3;
+    const v = (r << 11) | (g << 5) | b;
+    out[j++] = (v >> 8) & 0xFF;
+    out[j++] = v & 0xFF;
+  }
+  return out;
+}
+// Inverse of rgbaToRgb565, used to redraw a preview from cached bytes when switching back
+// to a slot — lossy relative to the original picked image (RGB565 already threw away the
+// low bits), but that's exactly what would actually be on the device, so it's an accurate
+// preview rather than an approximate one.
+function rgb565ToRgba(pixelBytes) {
+  const out = new Uint8ClampedArray((pixelBytes.length / 2) * 4);
+  let j = 0;
+  for (let i = 0; i < pixelBytes.length; i += 2) {
+    const v = (pixelBytes[i] << 8) | pixelBytes[i + 1];
+    const r = (v >> 11) & 0x1F, g = (v >> 5) & 0x3F, b = v & 0x1F;
+    out[j++] = (r << 3) | (r >> 2);
+    out[j++] = (g << 2) | (g >> 4);
+    out[j++] = (b << 3) | (b >> 2);
+    out[j++] = 255;
+  }
+  return out;
+}
+function renderPixelBytesToCanvas(pixelBytes) {
+  const canvas = $('ssPreviewCanvas');
+  canvas.style.display = '';
+  const ctx = canvas.getContext('2d');
+  ctx.putImageData(new ImageData(rgb565ToRgba(pixelBytes), 240, 240), 0, 0);
+}
+
+// Reactive slot switching — loads that slot's in-session cached image (if any) into the
+// preview/pixel buffer, or clears both if nothing's been picked for it yet this session.
+// Without this, switching slots left the *previous* slot's pixel data sitting in
+// `ssPixelBytes`, which would silently upload the wrong slot's image if the user forgot to
+// re-pick a file — the same class of bug the LED panel had before this cache existed.
+function loadSlotIntoForm(slot) {
+  const cached = ssSlotCache[slot];
+  if (cached) {
+    ssPixelBytes = cached;
+    renderPixelBytesToCanvas(cached);
+    $('ssProgress').textContent = `Loaded slot ${slot}'s picked image from earlier this session — ${cached.length} bytes, ${Math.ceil(cached.length / 16)} blocks.`;
+  } else {
+    ssPixelBytes = null;
+    $('ssFileInput').value = '';
+    const canvas = $('ssPreviewCanvas');
+    canvas.getContext('2d').clearRect(0, 0, 240, 240);
+    canvas.style.display = 'none';
+    $('ssProgress').textContent = live.ssSlot1Active === null
+      ? `Nothing picked yet for slot ${slot} this session.`
+      : (slot === 1 ? live.ssSlot1Active : live.ssSlot2Active)
+        ? `Slot ${slot} has a screensaver saved on the device, but nothing picked this session to re-upload — pick an image or test color first.`
+        : `Slot ${slot} is empty on the device, and nothing picked this session yet.`;
+  }
+  updateScreensaverButtons();
+}
+$('ssSlotSeg').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-val]');
+  if (btn) loadSlotIntoForm(parseInt(btn.dataset.val, 10));
+});
+
+// Highlights whichever slot(s) the device reports as actually populated (0x82 n[5]/n[6]) —
+// the one genuinely live, device-sourced signal available here, mirroring the LED rank
+// indicator. Requires an explicit 0x81 query since (unlike 0x99) this isn't a periodic
+// broadcast — see queryScreensaverStatus(), called on connect and on opening this tab.
+function updateScreensaverSlotIndicator() {
+  $('ssSlotSeg').querySelectorAll('button[data-val]').forEach(b => {
+    const slot = parseInt(b.dataset.val, 10);
+    const active = slot === 1 ? live.ssSlot1Active : live.ssSlot2Active;
+    b.classList.toggle('device-active', !!active);
+  });
+}
+function resetScreensaverSlotCache() {
+  ssSlotCache = { 1: null, 2: null };
+  live.ssSlot1Active = live.ssSlot2Active = live.ssOrder = live.ssTime = null;
+  $('ssStat2').textContent = $('ssStat3').textContent = $('ssStat4').textContent = '--';
+  $('ssStat5').textContent = $('ssStat6').textContent = '--';
+  loadSlotIntoForm(parseInt(segValue('ssSlotSeg'), 10));
+  updateScreensaverSlotIndicator();
+}
+async function queryScreensaverStatus() {
+  if (!writeChar) return;
+  await writeCmd(new Uint8Array([0x81, 0x06, 0x44, 0, 0, 0x81]), 'screensaver status query');
+}
+
+$('ssFileInput').addEventListener('change', async () => {
+  const file = $('ssFileInput').files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const canvas = $('ssPreviewCanvas');
+    canvas.style.display = '';
+    const ctx = canvas.getContext('2d');
+    const side = Math.min(img.width, img.height);
+    const sx = (img.width - side) / 2, sy = (img.height - side) / 2;
+    ctx.clearRect(0, 0, 240, 240);
+    ctx.drawImage(img, sx, sy, side, side, 0, 0, 240, 240);
+    const { data } = ctx.getImageData(0, 0, 240, 240);
+    ssPixelBytes = rgbaToRgb565(data);
+    ssSlotCache[parseInt(segValue('ssSlotSeg'), 10)] = ssPixelBytes;
+    $('ssProgress').textContent = `Ready — ${ssPixelBytes.length} bytes, ${Math.ceil(ssPixelBytes.length / 16)} blocks.`;
+    updateScreensaverButtons();
+  } catch (e) {
+    showToast('Could not read that image: ' + e.message);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
+// Isolates the pixel-format pipeline (RGB565 packing, byte order, block framing) from
+// everything upstream of it (JPEG decode, crop, canvas resize) by filling the buffer
+// directly instead of going through drawImage — a flat color that comes out wrong or
+// black on-device points squarely at the format/transfer, not the image-prep step.
+function setSolidTestColor(hexColor) {
+  const canvas = $('ssPreviewCanvas');
+  canvas.style.display = '';
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = hexColor;
+  ctx.fillRect(0, 0, 240, 240);
+  const { data } = ctx.getImageData(0, 0, 240, 240);
+  ssPixelBytes = rgbaToRgb565(data);
+  ssSlotCache[parseInt(segValue('ssSlotSeg'), 10)] = ssPixelBytes;
+  $('ssProgress').textContent = `Solid test color ${hexColor} ready — ${ssPixelBytes.length} bytes, ${Math.ceil(ssPixelBytes.length / 16)} blocks.`;
+  updateScreensaverButtons();
+}
+$('ssTestColorRow').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-color]');
+  if (btn) setSolidTestColor(btn.dataset.color);
+});
+
+let pendingSessionReadyAck = null;
+
+// Waits for the device's 0x73 session-ready ack after a 0x72 transfer-start. Traced
+// directly from the real app's source (see onNotify's 0x73 case) — the app's block-send
+// loop is a useEffect keyed on the state this opcode sets, not a fixed delay.
+//
+// CONFIRMED on real hardware (live capture): the device does send this, reliably — but it
+// took ~5 seconds after 0x72, not the 3s this used to time out at. Most likely explanation:
+// the firmware is erasing the target flash sector before it can accept writes, and NOR
+// flash sector erases commonly take a few seconds. With the old 3s timeout, ~105 blocks got
+// sent and silently dropped before the device was actually listening, corrupting the start
+// of the image and causing the device to abort its progress UI partway through — a real,
+// observed failure mode, not a hypothetical one. 15s gives real margin above the observed
+// ~5s. No more "proceed anyway on timeout": we now know this ack is real and required, so a
+// timeout means something is actually wrong, not just unverified — better to fail loudly.
+function waitForSessionReadyAck(timeoutMs = 15000) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (got) => { if (!done) { done = true; pendingSessionReadyAck = null; resolve(!!got); } };
+    pendingSessionReadyAck = finish;
+    setTimeout(() => finish(false), timeoutMs);
+  });
+}
+
+let pendingStatusAck = null;
+
+// Waits for a real 0x82 status response (not a fixed delay) before proceeding — unlike
+// 0x75, this one is confirmed to reliably arrive (seen in every capture this session), and
+// the real app's own progress UI is gated on receiving it, not on sending the query.
+function waitForStatusAck(timeoutMs = 2000) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; pendingStatusAck = null; resolve(); } };
+    pendingStatusAck = finish;
+    setTimeout(finish, timeoutMs);
+  });
+}
+
+let pendingPageAck = null;
+
+// Waits for the device's 0x75 page-write ack, with a timeout fallback in case a real
+// device doesn't send it in some situation we haven't seen — better to proceed slowly
+// than hang forever on a guess about undocumented protocol behavior.
+function waitForPageAck(timeoutMs = 2000) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; pendingPageAck = null; resolve(); } };
+    pendingPageAck = finish;
+    setTimeout(finish, timeoutMs);
+  });
+}
+
+let screensaverWakeLock = null;
+
+// Mirrors the real app's own activateKeepAwakeAsync()/deactivateKeepAwake() (found in its
+// source, wakeLockAtom) — it holds a screen wake lock for the duration of any transfer.
+// Not a guaranteed fix on its own (a wake lock keeps the *display* on, it does not prevent
+// the tab itself from being backgrounded/throttled if the user switches away), which is why
+// this is paired with the visibilitychange warning below rather than relied on alone.
+async function acquireScreensaverWakeLock() {
+  try {
+    if (navigator.wakeLock && navigator.wakeLock.request) {
+      screensaverWakeLock = await navigator.wakeLock.request('screen');
+    }
+  } catch (e) {
+    screensaverWakeLock = null;
+  }
+}
+async function releaseScreensaverWakeLock() {
+  try {
+    if (screensaverWakeLock) { await screensaverWakeLock.release(); }
+  } catch (e) {}
+  screensaverWakeLock = null;
+}
+
+function onScreensaverVisibilityChange() {
+  if (document.hidden && screensaverBusy) {
+    showToast('Screensaver upload: window left the foreground — this can corrupt or stall the transfer. Switch back now.');
+    log('TX', [], 'WARNING: tab backgrounded mid-upload');
+  }
+}
+
+async function uploadScreensaver() {
+  if (!writeChar || !ssPixelBytes) return;
+  // Snapshot the buffer up front — ssPixelBytes is a mutable global the file-input
+  // handler can reassign at any time. Without this, picking a different image mid-upload
+  // would silently mix chunks from two different images into one corrupted transfer.
+  const pixelBytes = ssPixelBytes;
+  const slot = parseInt(segValue('ssSlotSeg'), 10);
+  const total = pixelBytes.length;
+  screensaverBusy = true;
+  $('ssFileInput').disabled = true;
+  updateScreensaverButtons();
+  $('ssProgress').textContent = 'Keep this window in the foreground for the whole upload…';
+  await acquireScreensaverWakeLock();
+  document.addEventListener('visibilitychange', onScreensaverVisibilityChange);
+  try {
+    // Reverted back to the exact configuration that has an actual confirmed successful
+    // save on real hardware: 0x81 priming with a plain 100ms delay. Two later "improvements"
+    // (750ms delay, then waiting for a real 0x82 response) were only ever tested against
+    // the blue-screen cosmetic question, never re-confirmed against a real save — and the
+    // save failed both times since. Going back to what's actually proven, not what seemed
+    // better-reasoned on paper. The blue-screen question is set aside for now.
+    await writeCmd(new Uint8Array([0x81, 0x06, 0x44, 0, 0, 0x81]), 'screensaver status query (pre-transfer priming)');
+    await new Promise(r => setTimeout(r, 100));
+
+    // Corrected packet format after exhaustive tracing of the real app's source: `je`
+    // (which gates the 9-byte-with-length-bytes variant) is set false on mount and never
+    // changed anywhere in the component — confirmed by checking every single occurrence
+    // of its setter in the entire bundle, not just this component. For xe>1 (current-gen
+    // firmware, matching the Primary/Secondary button UI this device shows), the real app
+    // sends a plain 5-byte packet with no length field at all — the device presumably
+    // determines transfer completion from the 0x76 finish command and received block
+    // indices, not a pre-declared total. The 9-byte format used until now was wrong.
+    const startCmd = new Uint8Array([0x72, 0x05, 0x11, slot, 0x72]);
+    $('ssProgress').textContent = 'Starting transfer…';
+    await writeCmd(startCmd, `screensaver transfer start — slot ${slot}, ${total} bytes (corrected 5-byte format)`);
+
+    // The real app never sends 0x74 blocks on a fixed delay after 0x72 — it waits for the
+    // firmware's 0x73 session-ready ack first (see onNotify). CONFIRMED on real hardware:
+    // this ack is real and can take ~5s to arrive (likely a flash-sector erase before the
+    // firmware is ready to receive). A live capture showed a 3s timeout sending ~105 blocks
+    // before the real ack arrived, which the device silently dropped and then aborted the
+    // transfer over. Now a hard failure on timeout instead of a "proceed anyway" fallback —
+    // sending blocks before this ack is confirmed to corrupt the transfer, not just risky.
+    $('ssProgress').textContent = 'Waiting for device to confirm receive mode… (can take several seconds)';
+    const gotReady = await waitForSessionReadyAck();
+    if (!gotReady) {
+      throw new Error('device never sent the 0x73 session-ready ack — aborting before sending any blocks to avoid corrupting the transfer');
+    }
+    log('TX', [], 'session-ready (0x73) received — proceeding with blocks');
+
+    const chunkCount = Math.ceil(total / 16);
+    for (let i = 0; i < chunkCount; i++) {
+      const chunk = pixelBytes.slice(i * 16, i * 16 + 16);
+      const idx = to16(i);
+      const bytes = new Uint8Array([0x74, chunk.length + 3, idx[0], idx[1], ...chunk]);
+      await writeCmd(bytes, `screensaver block ${i + 1}/${chunkCount}`);
+      $('ssProgress').textContent = `Uploading… ${i + 1}/${chunkCount} blocks (${Math.round(((i + 1) / chunkCount) * 100)}%)`;
+      // REVERTED the "wait for a real 0x75 ack" logic. Live-hardware capture proved it
+      // never actually receives one — every 16-block group was hitting the 2-second
+      // timeout fallback, every time (confirmed: zero "RX 75" lines anywhere in a full
+      // 7200-block capture, and every log entry is printed regardless of whether it
+      // matched a known opcode, so a real ack would have shown up if the device sent one).
+      // That made this ~15x slower than the one attempt that actually worked, and is the
+      // likely cause of the device's transfer session timing out and erroring mid-upload.
+      // Back to the simple, uniform delay that was empirically proven to succeed.
+      await new Promise(r => setTimeout(r, 15));
+    }
+
+    await writeCmd(new Uint8Array([0x76, 0x04, 0x44, 0x76]), 'screensaver transfer finish/verify');
+    $('ssProgress').textContent = 'Upload complete — requesting status refresh…';
+    await new Promise(r => setTimeout(r, 250));
+    await writeCmd(new Uint8Array([0x81, 0x06, 0x44, 0, 0, 0x81]), 'screensaver status refresh query');
+    $('ssProgress').textContent = 'Done. Check the status tiles below and the raw log.';
+  } catch (e) {
+    $('ssProgress').textContent = 'Upload failed: ' + e.message;
+  } finally {
+    screensaverBusy = false;
+    $('ssFileInput').disabled = false;
+    updateScreensaverButtons();
+    document.removeEventListener('visibilitychange', onScreensaverVisibilityChange);
+    await releaseScreensaverWakeLock();
+  }
+}
+
+async function eraseScreensaver() {
+  if (!writeChar || screensaverBusy) return;
+  const slot = parseInt(segValue('ssSlotSeg'), 10);
+  await writeCmd(new Uint8Array([0x83, 0x06, slot, 0, 0, 0x83]), `erase screensaver slot ${slot}`);
+  // Refresh the live slot-active indicator to reflect the erase — doesn't touch the local
+  // in-session pixel cache, since erasing the device doesn't invalidate what was picked
+  // locally (re-uploading the same image right after an erase is a normal thing to do).
+  await queryScreensaverStatus();
+}
+
+async function factoryReset() {
+  if (!writeChar) return;
+  // Confirmed working as an actual reset on Carta 2 (recovered a device stuck after a
+  // corrupted screensaver upload). Live-tested on Carta Sport and it does NOT reset —
+  // it just powers the device off instead. Unknown on Aeris. Warn accordingly rather
+  // than implying this opcode does the same thing on every model.
+  const isQuantum = $('deviceModelSel').value === 'QUANTUM';
+  const modelWarning = isQuantum
+    ? ''
+    : "\n\nWARNING: this has only been confirmed to actually reset a Carta 2 — on Carta " +
+      "Sport it's been observed to just power the device off instead, not reset it. Model " +
+      "selected here is " + $('deviceModelSel').value + ".";
+  const ok = confirm(
+    'This will factory-reset the device: saved presets, LED settings, and screensaver ' +
+    'slots will be cleared. This does NOT reset any app-side/cloud-side cached state ' +
+    '(the real app does that separately before sending this command).' + modelWarning +
+    '\n\nContinue?'
+  );
+  if (!ok) return;
+  await writeCmd(new Uint8Array([0xAE, 0x04, 0xAE, 0xAE]), 'factory reset');
+}
+$('btnFactoryReset').addEventListener('click', factoryReset);
+
+$('btnUploadScreensaver').addEventListener('click', uploadScreensaver);
+$('btnEraseScreensaver').addEventListener('click', eraseScreensaver);
+
+// Order/time write — see the "0x80 (save/select) experiment" warn-box above the buttons.
+// Seconds is intentionally sent identically to both byte 3 and byte 4: a live test that
+// desynced them left the real app's own Screen Savers settings unreachable until the
+// device was reset, so this never sends them apart.
+async function sendScreensaverOrderExperiment() {
+  const a = Math.min(4, Math.max(1, parseInt($('ss80ParamA').value, 10) || 1));
+  const seconds = Math.min(255, Math.max(0, parseInt($('ss80ParamB').value, 10) || 0));
+  await writeCmd(new Uint8Array([0x80, 0x06, a, seconds, seconds, 0x80]), `screensaver order/time — order=${a} seconds=${seconds}`);
+  setTimeout(() => writeCmd(new Uint8Array([0x81, 0x06, 0x44, 0, 0, 0x81]), 'screensaver status query (post-write)'), 300);
+}
+$('btnSendScreensaverOrder').addEventListener('click', sendScreensaverOrderExperiment);
+$('btnQueryScreensaverStatus').addEventListener('click', () =>
+  writeCmd(new Uint8Array([0x81, 0x06, 0x44, 0, 0, 0x81]), 'screensaver status query (manual)'));
+
+// ---- Presets ----
+// Redesigned around one selection mechanism instead of two: previously the grid (tap to
+// select) and a separate Mode/Slot segmented picker in the editor both drove the same
+// state, which was confusing to navigate. Now the grid IS the picker — tapping a card
+// selects it (blue outline) and opens the editor for it directly below; there's no second,
+// parallel way to choose a slot.
+
+let selectedPresetMode = null;
+let selectedPresetRank = null;
+
+function presetTable(mode) {
+  const isC = live.scale === 34;
+  if (mode === 'flower') return isC ? live.flowerPresetsC : live.flowerPresetsF;
+  return isC ? live.concPresetsC : live.concPresetsF;
+}
+
+function onPresetClick(e) {
+  const btn = e.target.closest('.preset-btn');
+  if (!btn) return;
+  // Selecting a preset here never starts heating and never touches the device on its own —
+  // it only opens the editor below. The only device-touching actions on this panel are the
+  // explicit "Save to slot" and "Select on device" buttons in that editor.
+  selectedPresetMode = btn.dataset.mode;
+  selectedPresetRank = parseInt(btn.dataset.rank, 10);
+  // Full re-render (not just loadPresetEditorForm) so the grid's blue "selected" outline
+  // shows up immediately instead of waiting for the next periodic 0x99 tick to redraw it.
+  renderPresets();
+}
+$('flowerPresetGrid').addEventListener('click', onPresetClick);
+$('concPresetGrid').addEventListener('click', onPresetClick);
+$('btnRefreshPresets').addEventListener('click', triggerSync);
+
+// ---- Preset editor ----
+// Unlike LED presets and the screensaver, this one has real live BLE readback — the
+// 0x55/0x33/0x44/0x22 sync notifies (see onNotify) already give us the device's actual
+// saved temp/duration per slot, not just session memory. So "detecting current settings"
+// here means genuinely reading the synced table, and "reactive to what's selected" means
+// this reloads straight from that table whenever the grid selection changes, no local
+// cache needed.
+
+initSlider('presetEditTemp', 'presetEditTempVal');
+
+function loadPresetEditorForm() {
+  const formEl = $('presetEditForm');
+  if (selectedPresetMode === null) {
+    formEl.classList.add('hidden');
+    $('presetEditLabel').textContent = '(tap a preset above)';
+    return;
+  }
+  formEl.classList.remove('hidden');
+  const mode = selectedPresetMode, rank = selectedPresetRank;
+  $('presetEditLabel').textContent = `${mode === 'flower' ? '🌸 Flower' : '🟣 Concentrate'} #${rank}`;
+  const b = tempBounds(mode), db = durationBounds(mode);
+  const tempEl = $('presetEditTemp');
+  tempEl.min = b.min; tempEl.max = b.max; tempEl.step = 1;
+  const durEl = $('presetEditDuration');
+  durEl.min = db.min; durEl.max = db.max;
+  const table = presetTable(mode);
+  const slot = table && table[rank - 1];
+  if (slot) {
+    tempEl.value = clampToBounds(slot.temp, b);
+    $('presetEditTempVal').textContent = tempEl.value;
+    durEl.value = clampToBounds(slot.duration, db);
+    $('presetEditHint').textContent = `Synced from device: ${slot.temp}° for ${slot.duration}s. Valid range: ${b.min}-${b.max}°, ${db.min}-${db.max}s.`;
+  } else {
+    tempEl.value = b.min;
+    $('presetEditTempVal').textContent = tempEl.value;
+    durEl.value = db.min;
+    $('presetEditHint').textContent = (table === null
+      ? 'Waiting for the device to sync this table…'
+      : 'No synced data yet for this slot.') + ` Valid range: ${b.min}-${b.max}°, ${db.min}-${db.max}s.`;
+  }
+  updatePresetEditorButtons();
+}
+
+function updatePresetEditorButtons() {
+  const connected = !!(device && device.gatt && device.gatt.connected);
+  const selected = selectedPresetMode !== null;
+  const haveTable = selected && !!presetTable(selectedPresetMode);
+  $('btnSavePreset').disabled = !connected || !haveTable;
+  $('btnSelectPreset').disabled = !connected || !selected;
+}
+
+// Builds the 19-byte preset-table write (0x88 flower / 0x66 concentrate): all 5 slots of
+// the target mode's table, with only `targetRank` replaced — the other 4 echoed from the
+// currently synced table, matching how the real app edits one preset without disturbing
+// the rest (ble-protocol-notes.md, "Session presets"). Requires the table to already be
+// synced (checked by updatePresetEditorButtons's disabled state) since there's nothing
+// correct to echo otherwise.
+function buildPresetTableCommand(mode, targetRank, temp, duration) {
+  const table = presetTable(mode);
+  const opcode = mode === 'flower' ? 0x88 : 0x66;
+  const bytes = [opcode, 0x13];
+  for (let i = 0; i < 5; i++) {
+    const slot = (i + 1 === targetRank) ? { temp, duration } : table[i];
+    const t = to16(slot.temp);
+    bytes.push(t[0], t[1], slot.duration & 0xFF);
+  }
+  bytes.push(live.scale, opcode);
+  return new Uint8Array(bytes);
+}
+
+async function savePresetSlot() {
+  if (!writeChar || selectedPresetMode === null) return;
+  const mode = selectedPresetMode, rank = selectedPresetRank;
+  if (!presetTable(mode)) return;
+  // Clamped to the confirmed real range (DEVICE_LIMITS), not just the wire's 1-byte 0-255
+  // duration ceiling — a value that fits on the wire isn't necessarily one the device
+  // actually treats as valid.
+  const tb = tempBounds(mode), db = durationBounds(mode);
+  const temp = clampToBounds(parseInt($('presetEditTemp').value, 10) || tb.min, tb);
+  const duration = clampToBounds(parseInt($('presetEditDuration').value, 10) || db.min, db);
+  const cmd = buildPresetTableCommand(mode, rank, temp, duration);
+  await writeCmd(cmd, `save preset #${rank} (${mode}) → ${temp}° for ${duration}s`);
+  // No documented ack opcode for this write (unlike LED's 0xEA-family echoes) — the only
+  // confirmed way to see the result is the same 0x55/0x33/0x44/0x22 sync the app itself
+  // relies on, so re-trigger it rather than just assuming the write landed as sent.
+  await triggerSync();
+}
+$('btnSavePreset').addEventListener('click', savePresetSlot);
+
+// "Select on device" — marks this slot as the active ranking (0x11) without starting
+// heating; see selectPresetOnDevice() above. Deliberately does NOT read/send the editor's
+// temp/duration fields at all: it only changes which saved slot is active, exactly what
+// physically pressing the device's own hold-to-cycle button does. Whatever ends up running
+// when the device is actually started (by hand, or later via Quick Set) comes from what's
+// actually saved in that slot, not from unsaved edits sitting in this form.
+$('btnSelectPreset').addEventListener('click', () => {
+  if (selectedPresetMode === null) return;
+  selectPresetOnDevice(selectedPresetMode, selectedPresetRank);
+});
+
+// ---- Ramp waypoints ----
+
+function interpolateWaypoints(wps, t) {
+  if (t <= wps[0].t) return wps[0].temp;
+  for (let i = 1; i < wps.length; i++) {
+    if (t <= wps[i].t) {
+      const a = wps[i - 1], b = wps[i];
+      const frac = (t - a.t) / (b.t - a.t || 1);
+      return a.temp + (b.temp - a.temp) * frac;
+    }
+  }
+  return wps[wps.length - 1].temp;
+}
+
+function renderWaypoints() {
+  const b = tempBounds(segValue('rampModeSeg'));
+  const container = $('waypointList');
+  container.innerHTML = waypoints.map((wp, i) => `
+    <div class="field-row waypoint-row" data-index="${i}">
+      <div>
+        <div class="field-label">${i === 0 ? 'Start temp' : 'Temp #' + (i + 1)}</div>
+        <input type="number" class="wp-temp" min="${b.min}" max="${b.max}" value="${wp.temp}" aria-label="Waypoint temperature">
+      </div>
+      <div style="max-width:100px">
+        <div class="field-label">At (s)</div>
+        <input type="number" class="wp-time" min="0" value="${wp.t}" ${i === 0 ? 'disabled' : ''} aria-label="Waypoint time offset in seconds">
+      </div>
+      <div class="waypoint-remove-cell">
+        <button type="button" class="wp-remove" ${(i === 0 || waypoints.length <= 2) ? 'disabled' : ''} aria-label="Remove waypoint">✕</button>
+      </div>
+    </div>
+  `).join('');
+}
+$('waypointList').addEventListener('change', e => {
+  const row = e.target.closest('.waypoint-row');
+  if (!row) return;
+  const i = parseInt(row.dataset.index, 10);
+  if (e.target.classList.contains('wp-temp')) waypoints[i].temp = parseFloat(e.target.value) || 0;
+  if (e.target.classList.contains('wp-time')) waypoints[i].t = Math.max(0, parseFloat(e.target.value) || 0);
+  waypoints.sort((a, b) => a.t - b.t);
+  renderWaypoints();
+  saveSettingsToStorage();
+});
+$('waypointList').addEventListener('click', e => {
+  const btn = e.target.closest('.wp-remove');
+  if (!btn) return;
+  const row = e.target.closest('.waypoint-row');
+  const i = parseInt(row.dataset.index, 10);
+  if (waypoints.length > 2 && i > 0) {
+    waypoints.splice(i, 1);
+    renderWaypoints();
+    saveSettingsToStorage();
+  }
+});
+$('btnAddWaypoint').addEventListener('click', () => {
+  const last = waypoints[waypoints.length - 1];
+  waypoints.push({ temp: last.temp, t: last.t + 15 });
+  renderWaypoints();
+  saveSettingsToStorage();
+});
+
+// ---- Ramp ----
+
+function drawCurve(wps, holdSeconds, elapsedSeconds) {
+  const svg = $('curveSvg');
+  const rampSeconds = wps[wps.length - 1].t;
+  const totalSeconds = rampSeconds + holdSeconds;
+  const measuredVals = measuredSamples.map(s => s.temp);
+  const wpVals = wps.map(w => w.temp);
+  const minT = Math.min(...wpVals, ...(measuredVals.length ? measuredVals : wpVals)) - 20;
+  const maxT = Math.max(...wpVals, ...(measuredVals.length ? measuredVals : wpVals)) + 20;
+  const x = s => (Math.max(0, Math.min(s, totalSeconds)) / (totalSeconds || 1)) * 600;
+  const y = t => 220 - ((t - minT) / (maxT - minT || 1)) * 200 - 10;
+
+  let path = 'M ' + wps.map(w => `${x(w.t)} ${y(w.temp)}`).join(' L ');
+  path += ` L ${x(totalSeconds)} ${y(wps[wps.length - 1].temp)}`;
+
+  let marker = '';
+  if (elapsedSeconds !== null) {
+    const t = interpolateWaypoints(wps, Math.min(elapsedSeconds, rampSeconds));
+    marker = `<circle cx="${x(elapsedSeconds)}" cy="${y(t)}" r="5" fill="#5b9dff"/>`;
+  }
+  let measuredPath = '';
+  let measuredFill = '';
+  if (measuredSamples.length > 1) {
+    measuredPath = 'M ' + measuredSamples.map(s => `${x(s.t)} ${y(s.temp)}`).join(' L ');
+    measuredFill = measuredPath + ` L ${x(measuredSamples[measuredSamples.length - 1].t)} 220 L ${x(0)} 220 Z`;
+  }
+  const waypointDots = wps.map(w => `<circle cx="${x(w.t)}" cy="${y(w.temp)}" r="3" fill="#3ecf8e"/>`).join('');
+  svg.innerHTML = `
+    ${measuredFill ? `<path d="${measuredFill}" fill="#ffb45420" stroke="none"/>` : ''}
+    <path d="${path}" fill="none" stroke="#3ecf8e" stroke-width="2" stroke-dasharray="5,4"/>
+    ${waypointDots}
+    ${measuredPath ? `<path d="${measuredPath}" fill="none" stroke="#ffb454" stroke-width="2.5"/>` : ''}
+    ${marker}
+    <text x="490" y="16" fill="#3ecf8e" font-size="11">- - commanded</text>
+    <text x="490" y="30" fill="#ffb454" font-size="11">— measured</text>
+  `;
+}
+
+function playChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.15, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6);
+    o.start(); o.stop(ctx.currentTime + 0.6);
+  } catch (e) { /* AudioContext unavailable or blocked — non-critical */ }
+}
+function notifyRampComplete() {
+  if (!$('rampNotify').checked) return;
+  playChime();
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try { new Notification('Focus V ramp complete', { body: 'Ramp finished and held at target.' }); } catch (e) {}
+  }
+}
+$('rampNotify').addEventListener('change', () => {
+  if ($('rampNotify').checked && 'Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+  saveSettingsToStorage();
+});
+
+function exportRampCsv() {
+  const data = [
+    ...commandedSamples.map(s => ({ t: s.t, type: 'commanded', temp: s.temp })),
+    ...measuredSamples.map(s => ({ t: s.t, type: 'measured', temp: s.temp })),
+  ].sort((a, b) => a.t - b.t);
+  if (!data.length) { alert('No ramp data yet — run a ramp first.'); return; }
+  const lines = ['time_s,type,temp', ...data.map(d => `${d.t.toFixed(1)},${d.type},${d.temp}`)];
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `focusv-ramp-${Date.now()}.csv`;
+  a.click();
+}
+$('btnExportRamp').addEventListener('click', exportRampCsv);
+
+// ---- Ramp presets (named slots, save current setup / one-tap start-stop) ----
+
+function getRampConfig() {
+  return {
+    mode: segValue('rampModeSeg'),
+    waypoints: waypoints.map(w => ({ temp: w.temp, t: w.t })),
+    step: $('rampStep').value,
+    hold: $('rampHold').value,
+    closedLoop: $('rampClosedLoop').checked,
+    notify: $('rampNotify').checked,
+  };
+}
+function applyRampConfig(cfg) {
+  setSegmented('rampModeSeg', cfg.mode);
+  waypoints = cfg.waypoints.map(w => ({ temp: w.temp, t: w.t }));
+  $('rampStep').value = cfg.step;
+  $('rampHold').value = cfg.hold;
+  $('rampClosedLoop').checked = !!cfg.closedLoop;
+  $('rampNotify').checked = !!cfg.notify;
+  renderWaypoints();
+}
+function summarizeRampConfig(cfg) {
+  if (!cfg) return '(empty)';
+  const path = cfg.waypoints.map(w => w.temp + '°').join(' → ');
+  return path + (cfg.closedLoop ? ' · closed-loop' : '');
+}
+function renderRampPresets() {
+  ['A', 'B'].forEach(slot => {
+    const cfg = rampPresets[slot];
+    $('rampPresetName' + slot).textContent = (cfg && cfg.name) || ('Preset ' + slot);
+    $('rampPresetSummary' + slot).textContent = summarizeRampConfig(cfg);
+    $('btnRenameRampPreset' + slot).classList.toggle('hidden', !cfg);
+    const running = activeRampPreset === slot && !!rampTimer;
+    const btn = $('btnToggleRampPreset' + slot);
+    btn.textContent = running ? '■ Stop' : '▶ Start';
+    btn.classList.toggle('danger', running);
+    btn.classList.toggle('ok', !running);
+    btn.disabled = !cfg || !(device && device.gatt && device.gatt.connected);
+    $('rampPresetBox' + slot).classList.toggle('active', running);
+  });
+}
+function saveRampPreset(slot) {
+  const existing = rampPresets[slot];
+  const name = prompt('Name this preset:', (existing && existing.name) || ('Preset ' + slot));
+  if (name === null) return; // cancelled
+  rampPresets[slot] = Object.assign({ name: name || ('Preset ' + slot) }, getRampConfig());
+  saveSettingsToStorage();
+  renderRampPresets();
+}
+// Renames a slot without touching its saved curve — "save current" always overwrites the
+// curve with whatever's in the waypoint editor right now, which made renaming destructive
+// if your working waypoints happened to differ from what was actually saved.
+function renameRampPreset(slot) {
+  const cfg = rampPresets[slot];
+  if (!cfg) return;
+  const name = prompt('Rename preset:', cfg.name || ('Preset ' + slot));
+  if (name === null || !name.trim()) return; // cancelled or blank
+  cfg.name = name.trim();
+  saveSettingsToStorage();
+  renderRampPresets();
+}
+async function toggleRampPreset(slot) {
+  if (activeRampPreset === slot && rampTimer) {
+    await stopRamp(false);
+    return;
+  }
+  const cfg = rampPresets[slot];
+  if (!cfg) { showToast('Preset ' + slot + ' is empty — save one first.'); return; }
+  if (rampTimer) await stopRamp(false); // only one ramp runs at a time
+  applyRampConfig(cfg);
+  activeRampPreset = slot;
+  await startRamp();
+}
+$('btnSaveRampPresetA').addEventListener('click', () => saveRampPreset('A'));
+$('btnSaveRampPresetB').addEventListener('click', () => saveRampPreset('B'));
+$('btnRenameRampPresetA').addEventListener('click', () => renameRampPreset('A'));
+$('btnRenameRampPresetB').addEventListener('click', () => renameRampPreset('B'));
+$('btnToggleRampPresetA').addEventListener('click', () => toggleRampPreset('A'));
+$('btnToggleRampPresetB').addEventListener('click', () => toggleRampPreset('B'));
+
+async function startRamp() {
+  const mode = segValue('rampModeSeg');
+  const wps = waypoints.map(w => ({ temp: w.temp, t: w.t })).sort((a, b) => a.t - b.t);
+  const rampSeconds = wps[wps.length - 1].t;
+  const stepSeconds = parseFloat($('rampStep').value);
+  const holdSeconds = parseFloat($('rampHold').value);
+  const closedLoop = $('rampClosedLoop').checked;
+  const CLOSED_LOOP_TOLERANCE = 15; // degrees — how close measured temp must be to the last commanded step before advancing
+
+  btnRampStart.disabled = true;
+  btnRampStop.disabled = false;
+  renderRampPresets();
+  let elapsed = 0;
+  let lastTarget = wps[0].temp;
+  rampStartTime = Date.now();
+  measuredSamples = [];
+  commandedSamples = [];
+  await acquireWakeLock();
+  drawCurve(wps, holdSeconds, 0);
+
+  const tick = async () => {
+    const isLastStep = elapsed >= rampSeconds;
+    const scheduledTarget = isLastStep ? wps[wps.length - 1].temp : Math.round(interpolateWaypoints(wps, elapsed));
+    let target = scheduledTarget;
+    let held = false;
+
+    if (closedLoop && !isLastStep && elapsed > 0) {
+      const rising = target >= lastTarget;
+      const caughtUp = rising
+        ? live.measuredTemp >= lastTarget - CLOSED_LOOP_TOLERANCE
+        : live.measuredTemp <= lastTarget + CLOSED_LOOP_TOLERANCE;
+      if (!caughtUp) { target = lastTarget; held = true; }
+    }
+
+    const duration = isLastStep ? holdSeconds : Math.ceil(stepSeconds + 5);
+    try {
+      // skipDurationClamp: true for every ramp tick, not just the short fail-safe
+      // intermediate ones — a ramp's hold duration is deliberate user-configured timing
+      // for this DIY feature, not a stand-in for a real device session length, so it
+      // shouldn't get silently stretched up to the confirmed minimum either. Temperature
+      // still gets clamped regardless (buildTempCommand always does that part).
+      await sendTemp(mode, target, duration, true);
+    } catch (e) {
+      log('TX', [], 'ramp write failed: ' + e.message);
+    }
+    commandedSamples.push({ t: elapsed, temp: target });
+    lastTarget = target;
+    drawCurve(wps, holdSeconds, elapsed);
+    if (!held) elapsed += stepSeconds;
+    if (elapsed > rampSeconds + holdSeconds) {
+      stopRamp(true);
+    }
+  };
+
+  await tick();
+  rampTimer = setInterval(tick, stepSeconds * 1000);
+}
+
+function stopRampTimer() {
+  // Only cancels the app's local scheduling of further steps — does NOT tell the
+  // device to stop heating. The device keeps chasing whatever target/duration was
+  // last written until that write's own duration window naturally expires. Kept
+  // separate from stopSession()/powerOff() so they can clear the timer without
+  // recursing back into another device write.
+  if (rampTimer) clearInterval(rampTimer);
+  rampTimer = null;
+  rampStartTime = null;
+  activeRampPreset = null;
+  btnRampStart.disabled = !device || !device.gatt.connected;
+  btnRampStop.disabled = true;
+  releaseWakeLock();
+  renderRampPresets();
+}
+
+async function stopRamp(completed = false) {
+  // Real stop: cancel the app's timer AND tell the device to actually stop heating.
+  stopRampTimer();
+  if (device && device.gatt.connected) {
+    try {
+      await stopSession();
+    } catch (e) {
+      log('TX', [], 'ramp stop write failed: ' + e.message);
+    }
+  }
+  if (completed) notifyRampComplete();
+}
+
+btnConnect.addEventListener('click', connect);
+btnDisconnect.addEventListener('click', disconnect);
+btnStop.addEventListener('click', stopSession);
+btnPowerOff.addEventListener('click', powerOff);
+btnManSet.addEventListener('click', () => {
+  sendTemp(segValue('manModeSeg'), parseFloat($('manTempSlider').value), parseFloat($('manDuration').value));
+});
+btnRampStart.addEventListener('click', startRamp);
+btnRampStop.addEventListener('click', () => stopRamp(false));
+$('btnExportLog').addEventListener('click', (e) => {
+  e.preventDefault();
+  const blob = new Blob([logEl.innerText], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `focusv-livetemp-${Date.now()}.txt`;
+  a.click();
+});
+
+// Persist quick-set / ramp settings across reloads — per-viewer convenience only, never
+// used as a source of truth for device state.
+// Flower/concentrate have genuinely different confirmed temp/duration ranges (see
+// DEVICE_LIMITS above) — re-range on every mode switch, not just on scale/model changes.
+$('manModeSeg').addEventListener('click', () => { applyScaleUI(); saveSettingsToStorage(); });
+$('rampModeSeg').addEventListener('click', () => { renderWaypoints(); saveSettingsToStorage(); });
+$('manTempSlider').addEventListener('change', saveSettingsToStorage);
+$('manDuration').addEventListener('change', saveSettingsToStorage);
+$('rampStep').addEventListener('change', saveSettingsToStorage);
+$('rampHold').addEventListener('change', saveSettingsToStorage);
+$('rampClosedLoop').addEventListener('change', saveSettingsToStorage);
+
+loadSettingsFromStorage();
+renderWaypoints();
+renderRampPresets();
+tryOfferReconnect();
+</script>
+</body>
+</html>

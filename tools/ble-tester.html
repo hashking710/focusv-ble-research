@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Focus V BLE Tester</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb;
+    --muted: #8b92a1; --accent: #5b9dff; --ok: #3ecf8e; --warn: #ffb454; --err: #ff6b6b;
+    --tx: #5b9dff; --rx: #3ecf8e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--bg); color: var(--text); font-size: 13px;
+  }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex;
+    align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 0; height: calc(100vh - 58px); }
+  .panel { padding: 14px 18px; overflow-y: auto; }
+  .left { border-right: 1px solid var(--border); }
+  fieldset {
+    border: 1px solid var(--border); border-radius: 6px; margin-bottom: 14px; padding: 10px 12px;
+  }
+  legend { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 0 4px; }
+  button {
+    background: #23272f; color: var(--text); border: 1px solid var(--border); border-radius: 5px;
+    padding: 6px 10px; font-family: inherit; font-size: 12px; cursor: pointer; margin: 3px 4px 3px 0;
+  }
+  button:hover:not(:disabled) { background: #2c313c; border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #0b0f16; border-color: var(--accent); font-weight: 600; }
+  button.danger { border-color: var(--err); color: var(--err); }
+  select, input[type=text], input[type=number] {
+    background: #0b0d12; color: var(--text); border: 1px solid var(--border); border-radius: 5px;
+    padding: 6px 8px; font-family: inherit; font-size: 12px; width: 100%; margin: 4px 0 8px;
+  }
+  label { font-size: 11px; color: var(--muted); display: block; margin-top: 6px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err); }
+  .dot.on { background: var(--ok); }
+  .kv { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .kv b { color: var(--text); font-weight: 500; }
+  #log {
+    font-size: 12px; white-space: pre-wrap; word-break: break-all; height: calc(100% - 40px);
+    overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 10px; background: #0b0d12;
+  }
+  .entry { padding: 4px 0; border-bottom: 1px solid #1c2029; }
+  .entry .t { color: var(--muted); }
+  .entry .dir-TX { color: var(--tx); font-weight: 600; }
+  .entry .dir-RX { color: var(--rx); font-weight: 600; }
+  .entry .hex { color: var(--text); }
+  .entry .decoded { color: var(--warn); }
+  .logbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .warn-box {
+    background: #2a1f10; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px;
+    padding: 8px 10px; font-size: 11px; margin-bottom: 14px; line-height: 1.5;
+  }
+  .hint { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 4px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Focus V BLE Tester</h1>
+  <span class="sub">Console for the custom GATT service documented in ble-protocol-notes.md</span>
+  <span class="status" style="margin-left:auto">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">Not connected</span>
+  </span>
+</header>
+
+<main>
+  <div class="panel left">
+
+    <div class="warn-box">
+      ⚠ Do not send the OTA opcodes (<code>0x74 / 0x72 / 0x76</code>) unless you are
+      deliberately testing firmware transfer, don't send <code>0xAE</code> (Factory Reset)
+      unless you actually mean to erase the device, and don't send <code>0xC1</code>
+      (Trigger Recalibration) unless you actually mean to overwrite factory calibration —
+      all three are in the quick-fill list below for completeness, not as things to click
+      casually. Everything else here is normal runtime control and safe to iterate on.
+    </div>
+
+    <fieldset>
+      <legend>Connect</legend>
+      <label>Device family</label>
+      <select id="deviceKind">
+        <option value="qas">Quantum / Aeris / Sport (filter by custom service) — use this for Carta 2 too, confirmed live</option>
+        <option value="carta">Carta (filter by name "CARTA") — likely only original/EOL Carta hardware</option>
+      </select>
+      <button class="primary" id="btnConnect">Connect device</button>
+      <button class="danger" id="btnDisconnect" disabled>Disconnect</button>
+      <div class="kv" id="deviceInfo"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Standard reads (safe, zero ambiguity)</legend>
+      <button id="btnReadInfo" disabled>Read model / serial / revisions</button>
+      <button id="btnReadBattery" disabled>Read battery level</button>
+      <div class="kv" id="readOut"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Send raw bytes</legend>
+      <label>Quick-fill a documented command (edit before sending — see notes for field meanings)</label>
+      <select id="quickFill">
+        <option value="">— pick a command —</option>
+        <option value="204,0,12,0,0,0,0,0,0,0,0,204">Carta: stop / power off (0xCC, all-zero — fully confirmed)</option>
+        <option value="238,0,12,7,234,8,21,12,30,0,0,238">Carta: set date/time (0xEE, 12 bytes) — YYYY,MM,DD,HH,MM, edit yr hi/lo + fields</option>
+        <option value="238,20,0,0,255,0,0,255,0,0,255,0,0,255,0,0,255,0,0,238">Quantum/Aeris/Sport: SAVE LED PRESET rank 1, solid red (0xEE, 20 bytes) — expect ack 0xEA. Note: this opcode is shared with Carta's date/time command above; only the LENGTH (20 vs 12) tells them apart, so don't confuse the two</option>
+        <option value="221,12,7,234,8,21,12,30,0,0,0,221">Quantum/Aeris/Sport: set date/time (0xDD)</option>
+        <option value="222,4,160,222">Quantum/Aeris/Sport: set atomizer flow value (0xDE) — value ∈ {160,96,80,64,0}</option>
+        <option value="17,12,175,17,0,0,0,0,0,0,0,17">Quantum/Aeris/Sport: POWER OFF (0x11, byte[2]=0xAF) — confirmed, scale/rank bytes probably don't matter when powering off</option>
+        <option value="17,12,0,17,8,0,0,0,0,0,0,17">Quantum/Aeris/Sport: apply settings, °F, LPM off, rankings 0 (0x11) — edit byte[5]/[6]/[7] for flower/conc/LED rank, byte[9] vibration (0-10), byte[10] LPM flag</option>
+        <option value="209,7,0,10,0,10,209">Quantum/Aeris/Sport: set device/LED timeout pair (0xD1) — edit the two 2-byte fields (0xD2 will echo back whatever you send here, confirmed)</option>
+        <option value="174,4,174,174">⚠ Quantum/Aeris/Sport: FACTORY RESET (0xAE) — confirmed and irreversible, only send if you actually mean it</option>
+        <option value="131,6,1,0,0,131">Quantum/Aeris/Sport: erase screensaver, slot 1=primary (0x83)</option>
+        <option value="128,6,0,0,0,128">Quantum/Aeris/Sport: save/select screensaver (0x80) — param roles unconfirmed, checklist #9</option>
+        <option value="205,6,221,0,0,205">Quantum/Aeris/Sport: request calibration status (0xCD, safe, read-only in effect)</option>
+        <option value="193,6,119,0,0,193">⚠ Quantum/Aeris/Sport: TRIGGER RECALIBRATION (0xC1) — overwrites factory calibration, only send deliberately</option>
+      </select>
+      <label>Bytes (comma or space separated, decimal)</label>
+      <input type="text" id="rawBytes" placeholder="e.g. 204, 0, 12, 0, 0, 0, 0, 0, 0, 0, 0, 204">
+      <button class="primary" id="btnSend" disabled>Send</button>
+      <div class="hint">Sent bytes are logged and best-effort decoded against the opcode
+        table just like incoming notifications, so you can correlate what you sent with
+        what came back.</div>
+    </fieldset>
+
+  </div>
+
+  <div class="panel">
+    <div class="logbar">
+      <b>Traffic log</b>
+      <span>
+        <button id="btnClear">Clear</button>
+        <button id="btnExport">Export .txt</button>
+      </span>
+    </div>
+    <div id="log"></div>
+  </div>
+</main>
+
+<script>
+const SERVICE = '1011123e-8535-b5a0-7140-a304d2495cb7';
+const READ_CHAR = '1011123e-8535-b5a0-7140-a304d2495cb8';
+const WRITE_CHAR = '1011123e-8535-b5a0-7140-a304d2495cb9';
+const OTA_SERVICE = '00010203-0405-0607-0809-0a0b0c0d1912';
+
+let device = null, server = null, service = null, readChar = null, writeChar = null;
+
+const $ = id => document.getElementById(id);
+const dot = $('dot'), statusText = $('statusText'), deviceInfo = $('deviceInfo');
+const btnConnect = $('btnConnect'), btnDisconnect = $('btnDisconnect');
+const btnReadInfo = $('btnReadInfo'), btnReadBattery = $('btnReadBattery');
+const btnSend = $('btnSend'), rawBytes = $('rawBytes'), quickFill = $('quickFill');
+const logEl = $('log');
+
+if (!navigator.bluetooth) {
+  statusText.textContent = 'navigator.bluetooth unavailable — use desktop Chrome/Edge or Android Chrome';
+  [btnConnect].forEach(b => b.disabled = true);
+}
+
+quickFill.addEventListener('change', () => {
+  if (quickFill.value) rawBytes.value = quickFill.value;
+});
+
+function hex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join(' ');
+}
+
+function ascii(bytes) {
+  return Array.from(bytes).map(b => (b >= 32 && b < 127) ? String.fromCharCode(b) : '.').join('');
+}
+
+// Best-effort decode mirroring ble-protocol-notes.md. This is descriptive, not authoritative —
+// several branches are still marked unconfirmed in the notes.
+function decode(bytes, dir) {
+  const n = Array.from(bytes);
+  const kind = $('deviceKind').value; // 'qas' or 'carta'
+  const op = n[0];
+  const last = n[n.length - 1];
+
+  if (dir === 'TX') {
+    if (op === 0x11) {
+      const sub = n[2];
+      if (sub === 0xAF) return '0x11: POWER OFF (byte[2]=0xAF)';
+      return `0x11: apply settings — scale=${n[3]===0x22?'C':n[3]===0x11?'F':n[3]} flowerRank=${n[5]} concRank=${n[6]} ledRank=${n[7]} vibration=${n[9]} LPM=${n[10]}`;
+    }
+    if (op === 0xAE) return 'FACTORY RESET (0xAE) — confirmed, irreversible';
+    if ([0xEE, 0xE1, 0xE2, 0xE3, 0xE4].includes(op) && n.length === 20) {
+      const rank = {0xEE:1, 0xE1:2, 0xE2:3, 0xE3:4, 0xE4:5}[op];
+      return `Save LED preset, rank ${rank} (0x${op.toString(16)}) — expect ack 0x${[0xEA,0xE9,0xE8,0xE7,0xE6][rank-1].toString(16)}`;
+    }
+    const known = {
+      0xCC: n.length === 16 && n[13] === 0xAF ? 'Stop/abort session (0xCC, mode byte=0xAF)'
+          : n.length === 16 && n[13] === 0x66 && n[14] === 0x0A ? 'Test-fire / preview, ~10s (0xCC, marker=0x66,0x0A)'
+          : 'Set temp/mode or stop (0xCC)',
+      0xEE: 'Carta: set date/time (0xEE) [only if len=12 — 0xEE is also LED-preset-rank-1 write, see length/context]',
+      0xDD: 'Set date/time (0xDD) [note: 0xDD is also a QAS notify opcode for session log — direction matters]',
+      0xD1: 'Set device/LED timeout pair (0xD1) — relationship to 0x11 byte[9] unconfirmed, checklist #7',
+      0x88: 'Save flower session-preset table, 5 slots (0x88)',
+      0x66: 'Save concentrate session-preset table, 5 slots (0x66)',
+      0x83: `Erase screensaver, slot ${n[2]} (0x83)`,
+      0x80: 'Save/select screensaver (0x80) — param roles unconfirmed, checklist #9',
+      0xFA: 'Session-log progress ack (0xFA)',
+      0xFD: 'Session-log completion ack (0xFD)',
+      0xDE: 'Set atomizer/flow value (0xDE)',
+      0xCD: 'Request calibration status (0xCD) — expect 0xC2 notify in response',
+      0xC1: 'TRIGGER RECALIBRATION (0xC1) — overwrites factory calibration data',
+      0x81: 'OTA-adjacent query (0x81)',
+      0x76: '⚠ OTA finish/verify (0x76)',
+      0x74: '⚠ OTA firmware block write (0x74)',
+      0x72: '⚠ OTA session/start (0x72)',
+    };
+    return known[op] || `Unknown opcode 0x${op.toString(16)}`;
+  }
+
+  // RX (notify) — from the Bi() dispatcher in the app, line ~283413
+  if (kind === 'qas') {
+    if (op === 0xAA && n.length === 19 && last === 0xAA) return 'Live telemetry (al) — temp/power output';
+    if (op === 0xBB && n.length === 10 && last === 0xBB) return 'Status/ack (dl)';
+    if (op === 0x99 && n.length === 20 && (n[3] === 0x11 || n[3] === 0x22) && last === 0x99)
+      return `Device/session state (ol) — battery=${n[12]}% sleepIn=${n[18]}s`;
+    if ([0x55, 0x33, 0x44, 0x22].includes(op)) {
+      const label = {0x55:'flower, °F', 0x33:'concentrate, °F', 0x44:'flower, °C', 0x22:'concentrate, °C'}[op];
+      const slots = [];
+      for (let i = 2; i + 2 < n.length - 1; i += 3) {
+        slots.push(`${256*n[i]+n[i+1]}° / ${n[i+2]}s`);
+      }
+      return `Preset table sync: ${label} — ${slots.join(', ')}`;
+    }
+    if ([0xEA, 0xE9, 0xE8, 0xE7, 0xE6].includes(op) && n.length === 20) {
+      const rank = {0xEA:1, 0xE9:2, 0xE8:3, 0xE7:4, 0xE6:5}[op];
+      const colors = [];
+      for (let i = 4; i + 2 <= 18; i += 3) {
+        colors.push('#' + [n[i],n[i+1],n[i+2]].map(b => b.toString(16).padStart(2,'0')).join(''));
+      }
+      return `LED preset ACK, rank ${rank} (0x${op.toString(16)}) — S=${n[2]} P=${n[3]} colors: ${colors.join(' ')}`;
+    }
+    if (op === 0x82 && n.length === 8 && last === 0x82) {
+      return `Screensaver readback (0x82) — values: ${n[2]},${n[3]},${n[4]},${n[5]},${n[6]} (roles unresolved, checklist #16)`;
+    }
+    if (op === 0xDD) return 'Session log (sl) — chunk if byte[1]!=0, else summary record';
+    if (op === 0xDF && n[3] === 0xDF) return 'cl() — unconfirmed';
+    if (op === 0xCE && n.length === 7 && last === 0xCE) {
+      const flowerOhms = 256*n[2]+n[3], concOhms = 256*n[4]+n[5];
+      return `Atomizer resistance (Ni) — flower=${flowerOhms} conc=${concOhms} (units unconfirmed, likely milliohms)`;
+    }
+    if (op === 0xD2 && n.length === 7 && last === 0xD2) {
+      const v1 = 256*n[2]+n[3], v2 = 256*n[4]+n[5];
+      return `Confirmed ack for 0xD1 — echoed values ${v1}, ${v2}`;
+    }
+    if (op === 0xC2 && n.length === 8 && last === 0xC2) {
+      const ok = n[2] === 1;
+      const flowerOhms = 256*n[3]+n[4], concOhms = 256*n[5]+n[6];
+      return `Calibration status response — ${ok ? 'OK' : 'FAILED/needs recal'}, flower=${flowerOhms} conc=${concOhms}`;
+    }
+    return 'Fallback / unrecognized (ol)';
+  } else {
+    if (op === 0xBB && n[1] === 0 && n[2] === 10) return 'Live telemetry (al)';
+    if (op === 0xBB && n[1] === 0 && n[2] === 12 && (n[3] === 0x55 || n[3] === 0xA5) && last === 0xBB)
+      return 'Status/ack — branch ambiguous, see checklist #1 (dl/ol)';
+    if (op === 0xDD && n[1] === 0 && n[2] === 12 && (n[3] === 0x79 || n[3] === 0x56))
+      return 'Status variant (fl) — checklist #1';
+    return 'Fallback / unrecognized (dl)';
+  }
+}
+
+function log(dir, bytes) {
+  const t = new Date().toLocaleTimeString([], { hour12: false }) + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
+  const h = hex(bytes);
+  const a = ascii(bytes);
+  const d = decode(bytes, dir);
+  const div = document.createElement('div');
+  div.className = 'entry';
+  div.innerHTML = `<span class="t">${t}</span> <span class="dir-${dir}">${dir}</span> ` +
+    `<span class="hex">${h}</span>  <span style="color:#555">"${a}"</span><br>` +
+    `<span class="decoded">→ ${d}</span>`;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setConnected(on) {
+  dot.classList.toggle('on', on);
+  statusText.textContent = on ? `Connected — ${device.name || device.id}` : 'Not connected';
+  btnConnect.disabled = on;
+  btnDisconnect.disabled = !on;
+  btnReadInfo.disabled = !on;
+  btnReadBattery.disabled = !on;
+  btnSend.disabled = !on;
+}
+
+function onNotify(event) {
+  const value = new Uint8Array(event.target.value.buffer);
+  log('RX', value);
+}
+
+async function connect() {
+  const kind = $('deviceKind').value;
+  const options = kind === 'carta'
+    ? { filters: [{ name: 'CARTA' }], optionalServices: [SERVICE, OTA_SERVICE, 'device_information', 'battery_service', 'generic_access'] }
+    : { filters: [{ services: [SERVICE] }, { services: ['0000180a-0000-1000-8000-00805f9b34fb'] }], optionalServices: [SERVICE, OTA_SERVICE, 'device_information', 'battery_service', 'generic_access', 'user_data'] };
+
+  try {
+    device = await navigator.bluetooth.requestDevice(options);
+    device.addEventListener('gattserverdisconnected', () => setConnected(false));
+    server = await device.gatt.connect();
+    service = await server.getPrimaryService(SERVICE);
+    readChar = await service.getCharacteristic(READ_CHAR);
+    writeChar = await service.getCharacteristic(WRITE_CHAR);
+    await readChar.startNotifications();
+    readChar.addEventListener('characteristicvaluechanged', onNotify);
+    deviceInfo.innerHTML = `<b>Name:</b> ${device.name || '(unnamed)'}<br><b>ID:</b> ${device.id}`;
+    setConnected(true);
+    log('RX', new Uint8Array([])); // placeholder marker skipped below
+    logEl.lastChild.remove();
+    const marker = document.createElement('div');
+    marker.className = 'entry';
+    marker.innerHTML = `<span class="t">${new Date().toLocaleTimeString()}</span> <b style="color:var(--ok)">— connected —</b>`;
+    logEl.appendChild(marker);
+  } catch (e) {
+    statusText.textContent = 'Connect failed: ' + e.message;
+  }
+}
+
+async function disconnect() {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  setConnected(false);
+}
+
+async function readDeviceInfo() {
+  const out = [];
+  try {
+    const info = await server.getPrimaryService('device_information');
+    const fields = [
+      ['Model', '00002a24-0000-1000-8000-00805f9b34fb'],
+      ['Serial', '00002a25-0000-1000-8000-00805f9b34fb'],
+      ['HW rev', '00002a27-0000-1000-8000-00805f9b34fb'],
+      ['SW rev', '00002a28-0000-1000-8000-00805f9b34fb'],
+      ['Manufacturer', '00002a29-0000-1000-8000-00805f9b34fb'],
+    ];
+    for (const [label, uuid] of fields) {
+      try {
+        const c = await info.getCharacteristic(uuid);
+        const v = await c.readValue();
+        const txt = new TextDecoder().decode(v.buffer);
+        out.push(`<b>${label}:</b> ${txt}`);
+      } catch (e) { /* characteristic not present on this device, skip */ }
+    }
+  } catch (e) {
+    out.push(`device_information service unavailable: ${e.message}`);
+  }
+  $('readOut').innerHTML = out.join('<br>');
+}
+
+async function readBattery() {
+  try {
+    const batt = await server.getPrimaryService('battery_service');
+    const c = await batt.getCharacteristic('00002a19-0000-1000-8000-00805f9b34fb');
+    const v = await c.readValue();
+    $('readOut').innerHTML = `<b>Battery (0x2A19 raw read):</b> ${v.getUint8(0)}% ` +
+      `<span style="color:var(--warn)">— this specific characteristic is still not the real ` +
+      `source (the app never reads it). The actual battery % is byte[12] of the 0x99 ` +
+      `state-packet notify — watch the traffic log's "ol" entries for a live reading ` +
+      `instead of using this button.</span>`;
+  } catch (e) {
+    $('readOut').innerHTML = `battery_service unavailable: ${e.message}`;
+  }
+}
+
+async function send() {
+  const raw = rawBytes.value.trim();
+  if (!raw) return;
+  const parts = raw.split(/[\s,]+/).filter(Boolean).map(Number);
+  if (parts.some(n => isNaN(n) || n < 0 || n > 255)) {
+    alert('Each value must be a decimal number 0-255');
+    return;
+  }
+  const bytes = new Uint8Array(parts);
+  try {
+    await writeChar.writeValue(bytes.buffer);
+    log('TX', bytes);
+  } catch (e) {
+    log('TX', bytes);
+    const div = document.createElement('div');
+    div.className = 'entry';
+    div.innerHTML = `<span style="color:var(--err)">write failed: ${e.message}</span>`;
+    logEl.appendChild(div);
+  }
+}
+
+btnConnect.addEventListener('click', connect);
+btnDisconnect.addEventListener('click', disconnect);
+btnReadInfo.addEventListener('click', readDeviceInfo);
+btnReadBattery.addEventListener('click', readBattery);
+btnSend.addEventListener('click', send);
+$('btnClear').addEventListener('click', () => logEl.innerHTML = '');
+$('btnExport').addEventListener('click', () => {
+  const blob = new Blob([logEl.innerText], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `focusv-ble-log-${Date.now()}.txt`;
+  a.click();
+});
+</script>
+</body>
+</html>

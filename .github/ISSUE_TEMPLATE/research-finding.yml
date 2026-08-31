@@ -1,0 +1,49 @@
+name: Research finding or correction
+description: Report something that confirms, corrects, or resolves an item in the docs (especially docs/open-questions.md)
+title: "[Finding] "
+labels: ["research"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for digging into this. See [CONTRIBUTING.md](../../CONTRIBUTING.md) for what
+        makes a finding easy to act on — the short version is: cite your evidence the same way
+        the docs do (an address, a line number, what you actually observed).
+  - type: textarea
+    id: what
+    attributes:
+      label: What did you find?
+      description: State it plainly — what's confirmed, corrected, or resolved.
+    validations:
+      required: true
+  - type: dropdown
+    id: doc
+    attributes:
+      label: Which doc does this affect?
+      options:
+        - docs/ble-protocol.md
+        - docs/firmware-architecture.md
+        - docs/methodology.md
+        - docs/open-questions.md
+        - Something not yet documented
+    validations:
+      required: true
+  - type: dropdown
+    id: evidence-type
+    attributes:
+      label: Evidence type
+      options:
+        - Live BLE capture
+        - Decompiled/disassembled firmware function
+        - Cross-reference in the official app's own source
+        - Hardware-level observation (logic analyzer, multimeter, etc.)
+        - Other (explain below)
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: The actual address/line number/capture bytes/etc. — whatever lets someone else verify this without redoing your work.
+    validations:
+      required: true

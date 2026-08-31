@@ -1,0 +1,30 @@
+name: Hardware / collaboration offer
+description: You have a BLE sniffer, logic analyzer, or device hardware and want to help with the Roadmap items
+title: "[Hardware] "
+labels: ["help wanted"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        See the [README's Roadmap](../../README.md#roadmap) for what's specifically being looked
+        for (a passive BLE sniffer, a logic analyzer) and which
+        [Open Questions](../../docs/open-questions.md) items (tagged 📡/🔬) each would target.
+  - type: dropdown
+    id: what-you-have
+    attributes:
+      label: What do you have / can offer?
+      options:
+        - A BLE sniffer (nRF52840 dongle or similar) already set up
+        - A logic analyzer
+        - One of the actual devices (Carta 2 / Aeris / Carta Sport) for testing
+        - Firmware-analysis / Ghidra experience, want to collaborate on open items
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What you have, what you'd want to do with it, or what kind of collaboration you're proposing.
+    validations:
+      required: true
