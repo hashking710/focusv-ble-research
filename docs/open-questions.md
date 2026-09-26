@@ -8,6 +8,16 @@ everything that *is* confirmed. Items tagged 📡 (planned BLE sniffer) or 🔬 
 the hardware tooling planned in the [README's Roadmap section](../README.md#roadmap) — not yet
 started, but scoped against these exact gaps rather than "more reverse engineering in general."
 
+## Recently resolved
+
+- **Physical button-gesture detection.** Resolved once the exact chip (Telink TLSR8258) was
+  identified from a real board photo and cross-referenced against its public SDK — the firmware
+  polls `reg_gpio_pd_in` (real GPIO input register, not previously locatable via the Ghidra
+  module's incorrect register names) every scheduler tick with a standard software debounce. See
+  [Firmware Architecture § Physical button input](firmware-architecture.md#physical-button-input).
+  This was the exact case that motivated identifying the chip precisely in the first place —
+  general lesson in [Methodology](methodology.md).
+
 ## Firmware
 
 - 🔬 **Where the heating-element output is actually driven.** An exhaustive search of the main
@@ -38,14 +48,6 @@ started, but scoped against these exact gaps rather than "more reverse engineeri
   two-phase stage-then-copy model in [Firmware Architecture](firmware-architecture.md) is correct, the code that
   performs the final copy (and whatever self-flash-safety handling it needs, since this would be
   overwriting the flash region it may itself be executing from) has not been located.
-- 🔬 **Physical button-gesture detection.** Marketing/third-party documentation describes Low Power
-  Mode as toggled via a physical button gesture, and live testing confirms *some* button-hold
-  behavior is real firmware behavior (cycling preset ranks). But no GPIO-*read* primitive was
-  ever found (only the GPIO-*write* pair used for output), and live testing of the specific
-  documented multi-click gesture while already connected produced no observable BLE-side change
-  — current best theory is that gesture detection happens via a hardware-managed wake-event
-  mechanism outside this firmware image entirely (silicon wake-controller and/or mask-ROM), not
-  something this image's own code implements or could be extended to cover a new gesture.
 - **Two unexplained 4-byte fields in the 40-byte custom header**, ahead of the `KNLT` magic.
   Purpose unconfirmed — not a standard CRC32/Adler32.
 - **A handful of protocol-level fields** with unconfirmed exact meaning even though their byte

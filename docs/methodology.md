@@ -80,13 +80,25 @@ region "doesn't decompose into separate functions."
   matching a firmware-side finding against the exact packet-assembly code in the app's own
   JavaScript, rather than trusting either side alone.
 - **Live hardware testing resolves what static analysis can't.** Some behavior (exact ack
-  timing, whether a documented code path actually fires for a specific real operation, physical
-  button-gesture detection) is not reliably determinable from static analysis alone — a
-  BLE capture tool (`chrome://bluetooth-internals` against the real web app is enough for most
-  of this, since the web client *is* the official app) resolves these quickly and is worth
-  reaching for rather than continuing to guess from source.
+  timing, whether a documented code path actually fires for a specific real operation) is not
+  reliably determinable from static analysis alone — a BLE capture tool
+  (`chrome://bluetooth-internals` against the real web app is enough for most of this, since the
+  web client *is* the official app) resolves these quickly and is worth reaching for rather than
+  continuing to guess from source.
+- **Get the exact chip part number early — a real datasheet/SDK beats any amount of blind
+  disassembly.** This project spent several sessions unable to find the GPIO input-read register
+  needed for physical button-gesture detection, searching from every plausible angle (GPIO-write
+  call sites, a wake-controller theory, manual address-by-address decompilation). A single photo
+  of the real board, showing the exact part marking (`TLSR8258`), resolved it in minutes: Telink
+  publishes a real SDK for that specific chip with the real GPIO register map, and the register
+  the Ghidra module couldn't help find (because its bundled peripheral names are wrong — see the
+  MSP430 gotcha above) was a direct address match once checked against the real SDK. If a chip's
+  exact part number is legible on the board at all, get it before spending session after session
+  guessing from code shape alone.
 - **Retract cleanly when a working theory turns out wrong.** Several early theories in this
   research (an open-loop heating model, a "dual-bank OTA" address pair that turned out to be
-  screensaver storage, a suspected button-input source that turned out to be a tick counter) were
-  wrong and later corrected. Recording *why* a theory was wrong, not just deleting it, kept the
-  research from re-chasing the same dead end twice.
+  screensaver storage, a suspected button-input source that turned out to be a tick counter, a
+  "hardware wake-controller, not in this image" theory for button gestures that turned out to be
+  simply unfound rather than genuinely absent) were wrong and later corrected. Recording *why* a
+  theory was wrong, not just deleting it, kept the research from re-chasing the same dead end
+  twice.

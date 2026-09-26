@@ -16,9 +16,10 @@ a working model for *a* build, not necessarily *the current* one, until cross-ch
 
 ## Chip and toolchain
 
-**Telink TC32** — a 32-bit RISC-like core, similar to but not identical to ARM Thumb (generic
-ARM Thumb disassemblers decode it at best ~56% correctly). A genuine TC32-aware toolchain is
-required for trustworthy analysis.
+**Telink TLSR8258** — confirmed from the physical part marking on a real board (`TLSR8258
+F1KET48`), a 32-bit RISC-like TC32 core (similar to but not identical to ARM Thumb — generic ARM
+Thumb disassemblers decode it at best ~56% correctly). Telink publishes a real datasheet and SDK
+for this exact part, which turns out to matter a lot in practice — see the callout below.
 
 - **Ghidra 12.1.3** with the community `Telink_TC32` processor module
   ([rgov/Ghidra_TELink_TC32](https://github.com/rgov/Ghidra_TELink_TC32)) — SLEIGH spec compiled
@@ -30,6 +31,12 @@ required for trustworthy analysis.
   byte-for-byte at every point checked — genuine ground truth, not a single-tool guess.
 - **[GhidraMCP](https://github.com/LaurieWired/GhidraMCP)** for programmatic access to Ghidra's
   decompiler against a live CodeBrowser session.
+- **A real, public SDK for this exact chip** —
+  [Telink_825X_SDK](https://github.com/denpaforks/Telink_825X_SDK) (`components/drivers/8258/`)
+  — gives ground-truth peripheral register addresses that the Ghidra module's bundled register
+  names get wrong (see [Methodology](methodology.md)). Cross-referencing against it directly
+  resolved the physical-button-input question below, after several sessions of guessing from
+  code shape alone couldn't.
 
 See [Methodology](methodology.md) for tooling gotchas specific to this chip/module combination.
 
@@ -144,6 +151,33 @@ A genuine, ground-truth-confirmed safety subsystem, separate from the PID contro
 
 This subsystem only *reads and checks* — it does not appear to drive the heater output itself.
 Any firmware modification should leave this path untouched.
+
+## Physical button input
+
+The GPIO register map (see [Chip and toolchain](#chip-and-toolchain)) is a per-port-group block,
+8 bytes apart, with the *input data* register as the first byte of each group and *output data*
+as the fourth:
+
+```
+Port bases: A=0x800580, B=0x800588, C=0x800590, D=0x800598, E=0x8005a0
+  +0: in (read)   +1: ie   +2: oen   +3: out (write)   +4: pol   +5: ds   +6: func   +7: irq_en
+```
+Ports B and C are configured indirectly through the analog-register bus (see below); A, D, and E
+are direct memory-mapped reads/writes.
+
+**Confirmed: the physical button input is read every single scheduler tick**, polling
+`reg_gpio_pd_in` (`0x800598`) bits 1 and 5 — two distinct physical inputs — through a textbook
+software debounce: 6 consecutive same-state ticks confirms a press, 5 confirms a release, and a
+separate 14-tick counter on the second bit distinguishes a short press from a hold. Confirmed
+events are written into a small record (tag + tick-count-derived code) that appears to feed the
+same style of tag/param dispatch used for BLE commands elsewhere in this firmware, though its
+consumer hasn't been traced yet.
+
+A second function, also called every tick, gates on **both** `reg_gpio_pc_in` (`0x800590`) bit 0
+and the same `reg_gpio_pd_in` bits — when satisfied, it reconfigures several GPIO *output*
+registers at once and calls a helper with char-valued parameters (matching this firmware's
+general pattern of using ASCII-char op-codes, e.g. `'t'`/`'v'` for OTA). Plausibly a
+button-combo-gated mode/output change; not fully traced.
 
 ## Display
 
