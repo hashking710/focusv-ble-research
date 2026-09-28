@@ -68,8 +68,21 @@ see [`docs/open-questions.md`](docs/open-questions.md) rather than assuming sile
 Everything so far has come from static analysis (Ghidra) and *active* BLE capture (a tool that
 is itself the GATT client — `chrome://bluetooth-internals`, `focusv-controller.html`). That has a
 real ceiling: these devices only accept one central connection at a time, so an active-client
-tool can't watch the real official app talk to a device at the same time it's connected.
-Planned next:
+tool can't watch the real official app talk to a device at the same time it's connected. Hardware
+to move past that ceiling is now sourced (see [Methodology § Hardware tooling](docs/methodology.md#hardware-tooling)
+for the reasoning and exact parts):
+
+- **A logic analyzer** (8-channel, 24MHz), for passively probing the SPI flash bus and candidate
+  GPIO lines directly on the board — targeted at where the heating-element output is actually
+  driven, and how the physical button-gesture input is read (no GPIO-*read* primitive was ever
+  located in the firmware image itself — see [Open Questions](docs/open-questions.md)).
+- **An SWD probe**, for dumping and debugging the Nuvoton M031's own firmware directly — the
+  leading candidate for the heating-element driver, previously only theorized about from the
+  outside (see [Firmware Architecture § Board hardware](docs/firmware-architecture.md#board-hardware)).
+- **SWire tooling for the TLSR8258 itself** — a genuinely separate, non-obvious requirement from
+  the SWD probe above; see the Methodology doc for why.
+
+Still planned, not yet sourced:
 
 - **A passive BLE sniffer** (e.g. an nRF52840 dongle running an open-source BLE sniffer
   firmware/Wireshark plugin) — captures the over-the-air link layer directly, without
@@ -78,14 +91,9 @@ Planned next:
   [Open Questions](docs/open-questions.md) — the real GATT write-callback, where the erase-trigger
   flag gets set, the finalize/copy step — none of which have been resolvable through active
   capture alone.
-- **A logic analyzer**, probing the SPI flash bus and candidate GPIO lines directly on the board.
-  Targeted at the two items static firmware analysis hit a hard wall on: where the heating-element
-  output is actually driven, and how the physical button-gesture input is read (no GPIO-*read*
-  primitive was ever located in the firmware image itself — see
-  [Open Questions](docs/open-questions.md)).
 
-Both are hardware-acquisition-gated, not yet started — this section will move to "Status" once
-either is in hand and produces something concrete to publish.
+This section will move to "Status" once hardware is in hand and produces something concrete to
+publish.
 
 ## Related
 

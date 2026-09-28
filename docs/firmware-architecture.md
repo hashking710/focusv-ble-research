@@ -46,6 +46,14 @@ Everything else in this document is about the TLSR8258's own firmware. Identifyi
 chips on the board (from real part photos) turned out to matter for scoping *what's even in this
 firmware image in the first place*:
 
+<table>
+<tr>
+<td align="center" width="33%"><img src="../assets/chips/tlsr8258.jpg" width="280" alt="Telink TLSR8258"><br><b>Telink TLSR8258</b><br><sub>main BLE SoC</sub></td>
+<td align="center" width="33%"><img src="../assets/chips/m031.jpg" width="280" alt="Nuvoton M031TD2AE"><br><b>Nuvoton M031TD2AE</b><br><sub>second MCU, undumped</sub></td>
+<td align="center" width="33%"><img src="../assets/chips/southchip.jpg" width="280" alt="SouthChip SC8922A"><br><b>SouthChip SC8922A</b><br><sub>battery charger IC</sub></td>
+</tr>
+</table>
+
 | Chip | Role |
 |---|---|
 | **Telink TLSR8258** | Main BLE SoC — everything this document otherwise describes: session/BLE handling, the PID control loop, display, flash. |
@@ -83,10 +91,21 @@ for what that leaves open.
 
 The distributed `.bin` has a **40-byte custom header**:
 
-- Bytes 0-7: two 4-byte fields, purpose unconfirmed (not a standard CRC32/Adler32).
+- Bytes 0-7: two 4-byte fields, confirmed **fixed constants** — identical across two real firmware
+  files for different device targets with completely different size and content, ruling out a
+  content-derived checksum. Not standard CRC32/Adler32 either way; can be copied verbatim into a
+  patched image with no computation.
 - Bytes 8-11: magic `KNLT` (ASCII) — this is checked both by the app before sending an update,
-  and by the firmware itself at boot (see Flash layout below).
-- Remaining header bytes: unconfirmed.
+  and by the firmware itself at boot (see Flash layout below). **Confirmed this is the only header
+  content the firmware's own boot-time validity check reads at all** — it reads 9 header bytes and
+  checks exactly this one.
+- Bytes 12-13: a 2-byte field that does genuinely vary between builds — not a checksum match
+  against any standard algorithm/byte-range combination tried (CRC16, CRC32, Adler32). See
+  [Open Questions](open-questions.md).
+- Byte 24 (4 bytes): self-referencing total file length — confirmed, matches the file's own byte
+  length exactly on both real firmware files checked.
+- Remaining header bytes: unconfirmed, but also confirmed **not read** by the one boot-time check
+  located so far.
 
 All addresses in this document are relative to the file **with that header stripped** (byte 0 of
 the stripped image = byte 40 of the original download).

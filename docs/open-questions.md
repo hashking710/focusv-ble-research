@@ -4,9 +4,11 @@
 
 What's still unresolved, as a current punch list rather than a log of how each item was chased.
 See [Firmware Architecture](firmware-architecture.md) and [BLE Protocol](ble-protocol.md) for
-everything that *is* confirmed. Items tagged 📡 (planned BLE sniffer) or 🔬 (planned logic analyzer) are specifically targeted by
-the hardware tooling planned in the [README's Roadmap section](../README.md#roadmap) — not yet
-started, but scoped against these exact gaps rather than "more reverse engineering in general."
+everything that *is* confirmed. Items tagged 📡 (planned BLE sniffer, not yet sourced) or 🔬
+(logic analyzer / SWD probe, hardware now sourced — see
+[Methodology § Hardware tooling](methodology.md#hardware-tooling)) are specifically targeted by
+the hardware tooling described in the [README's Roadmap section](../README.md#roadmap), scoped
+against these exact gaps rather than "more reverse engineering in general."
 
 ## Recently resolved
 
@@ -41,9 +43,10 @@ started, but scoped against these exact gaps rather than "more reverse engineeri
   all — the M031 running its own independent closed loop from its own ADC, with the TLSR8258's PID
   output used only for BLE telemetry/on-screen display. **Not proven at the firmware level** — the
   M031's own flash hasn't been dumped or analyzed at all; that's a new target requiring standard
-  Arm/SWD tooling, not the Telink TC32 setup used everywhere else in this repo. The logic-analyzer
-  work below would still help confirm which physical chip actually switches the heater current,
-  independent of a firmware dump.
+  Arm/SWD tooling, not the Telink TC32 setup used everywhere else in this repo (see
+  [Methodology § Hardware tooling](methodology.md#hardware-tooling) — this is now in progress). The
+  logic-analyzer work would still help confirm which physical chip actually switches the heater
+  current, independent of a firmware dump.
 - **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
   flash address `0`) and an erase-target decision between address `0` and a staging area at
   `0x40000` are confirmed (see [Firmware Architecture](firmware-architecture.md)), but no evidence exists in this image
@@ -63,8 +66,19 @@ started, but scoped against these exact gaps rather than "more reverse engineeri
   two-phase stage-then-copy model in [Firmware Architecture](firmware-architecture.md) is correct, the code that
   performs the final copy (and whatever self-flash-safety handling it needs, since this would be
   overwriting the flash region it may itself be executing from) has not been located.
-- **Two unexplained 4-byte fields in the 40-byte custom header**, ahead of the `KNLT` magic.
-  Purpose unconfirmed — not a standard CRC32/Adler32.
+- **Two 4-byte fields in the 40-byte custom header, ahead of the `KNLT` magic — now mostly
+  resolved.** Direct byte comparison of two real firmware files (different device targets,
+  completely different size and content) showed these two fields are **identical across both** —
+  they're fixed constants, not a content-derived checksum, and can be copied verbatim into a
+  patched image with no computation needed. Confirmed separately that the firmware's own boot-time
+  validity check (`FUN_00005558` in the private research notes) reads only 9 header bytes and
+  checks exactly one of them (the `K` of `KNLT`) — nothing else in the header is validated by any
+  code found in this image. **What's still open**: a much narrower 2-byte field (offset 12-13)
+  that does genuinely vary between builds and doesn't match CRC16, CRC32, or Adler32 against any
+  tried candidate byte range — likely an opaque build/sequence tag rather than a validated
+  checksum, but not proven. Also still open: whether the still-unlocated OTA-finalize code, or a
+  silicon mask-ROM bootloader entirely outside this image, checks anything beyond what's confirmed
+  here.
 - **A handful of protocol-level fields** with unconfirmed exact meaning even though their byte
   positions are known — see [BLE Protocol](ble-protocol.md)'s own "Known gaps" section (an unmapped screensaver
   status byte, the exact calibration-status query/response pairing, screensaver slot-select

@@ -28,6 +28,35 @@ it — particularly the Ghidra/Telink TC32 setup, which has a couple of non-obvi
    with something else already running locally, it's configurable via
    `Edit → Tool Options → GhidraMCP HTTP Server`.
 
+## Hardware tooling
+
+Static analysis and active BLE capture both hit real ceilings (see the [README's
+Roadmap](../README.md#roadmap)) — this board needs three genuinely different categories of
+hardware tool, not one "debugger" that covers everything. Worth understanding *why* three, since
+it's not obvious going in.
+
+- **A cheap logic analyzer** (8-channel, 24MHz is plenty — the classic Cypress-based "Saleae
+  clone" sold under many names) for passive probing. Doesn't care what chip or protocol it's
+  looking at, can't brick anything, and directly attacks the board-level open questions (which
+  physical chip switches the heater current, whether there's a real signal between the two
+  chips) that static analysis alone couldn't resolve.
+- **A standard SWD probe** for the **Nuvoton M031** — a genuine Arm Cortex-M0, so any CMSIS-DAP or
+  ST-Link-class probe works via the usual toolchains (OpenOCD, pyOCD). This is what actually lets
+  the M031's own firmware get dumped and analyzed, rather than reasoned about from the outside.
+- **SWire tooling for the TLSR8258 itself — not the same thing, and easy to assume it is.** The
+  main chip (everything else in this repo) does **not** speak standard ARM SWD at all — it uses
+  Telink's own proprietary **SWire** (single-wire) debug protocol. A generic SWD/JTAG probe
+  genuinely cannot talk to it, no matter how well-regarded. Community tooling exists for the real
+  protocol — [`pvvx/TLSRPGM`](https://github.com/pvvx/TLSRPGM) (needs a second Telink chip as the
+  programmer) or the lighter-weight [`pvvx/TlsrComSwireWriter`](https://github.com/pvvx/TlsrComSwireWriter)
+  (bit-bangs SWire from a plain PC serial adapter — but explicitly does not work with FTDI-chip
+  adapters or ones with an LED wired directly on the RX line, both common on cheap boards; a
+  CH340- or CP2102-based adapter without those is the practical choice). This is worth treating as
+  a prerequisite before ever sending a real custom OTA payload to this chip, not an optional
+  nice-to-have — a bad transfer with no independent way to recover the chip is a real risk this
+  repo's own OTA-mechanism analysis hasn't fully closed out (see
+  [Open Questions](open-questions.md)).
+
 ## Gotcha: named registers are not trustworthy for this processor module
 
 The community `Telink_TC32` module's register/symbol map (`Telink_TC32.pspec`) is a **verbatim TI
