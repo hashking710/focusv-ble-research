@@ -29,13 +29,21 @@ started, but scoped against these exact gaps rather than "more reverse engineeri
   not just because it has the peripherals for it, but because the confirmed PID loop computes a
   real output value every tick with nowhere on-chip to go, and the M031 is physically positioned
   near the board's high-current leads rather than near the display connector (the display itself
-  is separately fully accounted for on the TLSR8258 side, ruling that out as the M031's job). A
-  real UART is confirmed initialized at boot, matching the SDK's real register layout — a
-  candidate transport for that output value — but no actual transmit call using it has been found
-  yet. **Not proven at the firmware level** — the M031's own flash hasn't been dumped or analyzed
-  at all; that's a new target requiring standard Arm/SWD tooling, not the Telink TC32 setup used
-  everywhere else in this repo. The logic-analyzer work below would still help confirm which
-  physical chip actually switches the heater current, independent of a firmware dump.
+  is separately fully accounted for on the TLSR8258 side, ruling that out as the M031's job).
+  **Every standard external comms peripheral on the TLSR8258 (I2C, SPI, MSPI, UART) has now been
+  checked against the complete real register map and ruled out as a data link to the M031** — SPI
+  is the display, MSPI is the on-chip flash controller, I2C has no real hits, and the UART (though
+  genuinely initialized and enabled at boot) never references its own data/status registers
+  anywhere in the image, meaning it never actually transmits or receives a byte. That leaves two
+  live possibilities static analysis alone can't distinguish: a plain bit-banged GPIO signal (a
+  software-timed pulse the M031 could read via its own timer-capture input, a different code shape
+  than the duty-register search above would catch) rather than a proper bus, or no data link at
+  all — the M031 running its own independent closed loop from its own ADC, with the TLSR8258's PID
+  output used only for BLE telemetry/on-screen display. **Not proven at the firmware level** — the
+  M031's own flash hasn't been dumped or analyzed at all; that's a new target requiring standard
+  Arm/SWD tooling, not the Telink TC32 setup used everywhere else in this repo. The logic-analyzer
+  work below would still help confirm which physical chip actually switches the heater current,
+  independent of a firmware dump.
 - **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
   flash address `0`) and an erase-target decision between address `0` and a staging area at
   `0x40000` are confirmed (see [Firmware Architecture](firmware-architecture.md)), but no evidence exists in this image

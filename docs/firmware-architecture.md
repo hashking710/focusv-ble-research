@@ -65,10 +65,19 @@ control: the confirmed PID loop (see [below](#session-state-machine-and-pid-cont
 computes a real output value every tick that has no on-chip destination (the exhaustive PWM/GPIO
 search below found nowhere for it to go) — a second MCU with 12 PWM channels, physically
 positioned near the board's high-current leads rather than near the display connector, is the
-natural place for that value to go. A real hardware UART is confirmed initialized at boot
-(matching the real SDK's register layout exactly) — one candidate for how that value would
-actually travel — but no transmit call using it has been located yet, so this remains the leading
-theory, not a confirmed link. See [Open Questions](open-questions.md).
+natural place for that value to go.
+
+**Every standard external communication peripheral on the TLSR8258 has now been checked and ruled
+out as the transport to the M031.** A literal-pool scan against the complete real register map (all
+345 entries from the SDK's `register_8258.h` — I2C, SPI, MSPI, UART, clock/reset, I2S/DMIC, not
+just the GPIO/UART/SPI subset checked earlier) found: SPI traces entirely to the display (above);
+MSPI traces entirely to the on-chip SPI-NOR flash controller; I2C has zero real hits. The UART is
+genuinely initialized and enabled at boot, but its data and status registers — the only two
+registers any transmit or receive call could possibly use — have **zero references anywhere in the
+firmware image**. That rules the UART out as a data link, rather than leaving it as an open lead:
+every one of its register hits is already fully accounted for by the three boot-time
+init/enable/mode-config calls, with nothing left unsearched. See [Open Questions](open-questions.md)
+for what that leaves open.
 
 ## File format
 
