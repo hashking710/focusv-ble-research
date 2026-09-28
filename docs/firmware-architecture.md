@@ -57,6 +57,19 @@ cycles, or anything else this document says was exhaustively searched for and no
 TLSR8258 image, the Nuvoton M031 is the next place to look — a genuinely separate analysis effort
 from everything else in this repo so far.
 
+**Why heater rather than display, specifically.** The display isn't a live possibility for the
+M031 — it's already fully accounted for on the TLSR8258 side (see [Display](#display) below):
+the exact real ST7789 command set and gamma tables, driven directly over the TLSR8258's own SPI
+peripheral, confirmed by literal register-address match. A more specific argument for heater
+control: the confirmed PID loop (see [below](#session-state-machine-and-pid-control-loop))
+computes a real output value every tick that has no on-chip destination (the exhaustive PWM/GPIO
+search below found nowhere for it to go) — a second MCU with 12 PWM channels, physically
+positioned near the board's high-current leads rather than near the display connector, is the
+natural place for that value to go. A real hardware UART is confirmed initialized at boot
+(matching the real SDK's register layout exactly) — one candidate for how that value would
+actually travel — but no transmit call using it has been located yet, so this remains the leading
+theory, not a confirmed link. See [Open Questions](open-questions.md).
+
 ## File format
 
 The distributed `.bin` has a **40-byte custom header**:

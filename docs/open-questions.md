@@ -23,12 +23,17 @@ started, but scoped against these exact gaps rather than "more reverse engineeri
 - 🔬 **Where the heating-element output is actually driven.** An exhaustive search of the main
   TLSR8258 firmware image (the entire cooperative scheduler, every GPIO write, the analog-register
   bus, the confirmed-empty interrupt vector table) found no duty-varying or PWM-style output write
-  anywhere. **Likely explained**: a separate, real Nuvoton M031TD2AE (Arm Cortex-M0, 12× 16-bit
-  PWM channels) MCU is confirmed to exist on the same board (see
-  [Firmware Architecture § Board hardware](firmware-architecture.md#board-hardware)) — a strong
-  candidate for the actual heater driver, fully explaining the TLSR8258-side absence. **Not
-  proven at the firmware level** — the M031's own flash hasn't been dumped or analyzed at all;
-  that's a new target requiring standard Arm/SWD tooling, not the Telink TC32 setup used
+  anywhere. **Leading theory**: a separate, real Nuvoton M031TD2AE (Arm Cortex-M0, 12× 16-bit PWM
+  channels) MCU confirmed to exist on the same board (see
+  [Firmware Architecture § Board hardware](firmware-architecture.md#board-hardware)) drives it —
+  not just because it has the peripherals for it, but because the confirmed PID loop computes a
+  real output value every tick with nowhere on-chip to go, and the M031 is physically positioned
+  near the board's high-current leads rather than near the display connector (the display itself
+  is separately fully accounted for on the TLSR8258 side, ruling that out as the M031's job). A
+  real UART is confirmed initialized at boot, matching the SDK's real register layout — a
+  candidate transport for that output value — but no actual transmit call using it has been found
+  yet. **Not proven at the firmware level** — the M031's own flash hasn't been dumped or analyzed
+  at all; that's a new target requiring standard Arm/SWD tooling, not the Telink TC32 setup used
   everywhere else in this repo. The logic-analyzer work below would still help confirm which
   physical chip actually switches the heater current, independent of a firmware dump.
 - **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
