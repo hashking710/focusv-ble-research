@@ -57,6 +57,8 @@ it's not obvious going in.
   repo's own OTA-mechanism analysis hasn't fully closed out (see
   [Open Questions](open-questions.md)).
 
+The specific parts sourced for all three: [shopping list](https://www.amazon.com/hz/wishlist/ls/15KL7DVW8CBT2?ref_=wl_share).
+
 ## Gotcha: named registers are not trustworthy for this processor module
 
 The community `Telink_TC32` module's register/symbol map (`Telink_TC32.pspec`) is a **verbatim TI
