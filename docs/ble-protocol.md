@@ -1,4 +1,4 @@
-[← README](../README.md) · **BLE Protocol** · [Firmware Architecture](firmware-architecture.md) · [Methodology](methodology.md) · [Open Questions](open-questions.md)
+[← README](../README.md) · **BLE Protocol** · [Firmware Architecture](firmware-architecture.md) · [Methodology](methodology.md) · [Hardware Setup](hardware-setup.md) · [Open Questions](open-questions.md)
 
 # BLE Protocol Reference
 

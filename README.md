@@ -29,6 +29,7 @@ See [`LEGAL.md`](LEGAL.md) for why this kind of work is on solid legal footing.
 | **[BLE Protocol Reference](docs/ble-protocol.md)** | GATT services/characteristics, packet framing, every write/notify opcode found, the real firmware-OTA and screensaver-image wire protocols |
 | **[Firmware Architecture Reference](docs/firmware-architecture.md)** | Chip/toolchain, boot chain, the confirmed closed-loop PID temperature controller, thermal safety subsystem, flash layout, firmware self-update mechanism |
 | **[Methodology](docs/methodology.md)** | How this was done, plus two non-obvious Ghidra/Telink-TC32 tooling gotchas worth knowing before repeating any of it |
+| **[Hardware Setup Guide](docs/hardware-setup.md)** | Step-by-step instructions for the logic analyzer, SWD probe, and SWire recovery tooling — written for a hobbyist with basic soldering experience |
 | **[Open Questions](docs/open-questions.md)** | What's still unresolved, as a current punch list |
 
 ## Tools
