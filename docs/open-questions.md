@@ -21,14 +21,16 @@ started, but scoped against these exact gaps rather than "more reverse engineeri
 ## Firmware
 
 - 🔬 **Where the heating-element output is actually driven.** An exhaustive search of the main
-  firmware image (the entire cooperative scheduler, every GPIO write, the analog-register bus,
-  the confirmed-empty interrupt vector table) found no duty-varying or PWM-style output write
-  anywhere. Two live possibilities: (a) dedicated hardware (a PWM peripheral configured once at
-  init and left running autonomously) that this kind of search wouldn't surface, or (b) a
-  **separate companion MCU** handles high-current heater switching, talked to over a serial link
-  from this chip — the app's own configuration references a distinct "battery MCU" firmware
-  update path, though its manifest endpoints returned no published content when checked, so this
-  couldn't be confirmed or ruled out that way.
+  TLSR8258 firmware image (the entire cooperative scheduler, every GPIO write, the analog-register
+  bus, the confirmed-empty interrupt vector table) found no duty-varying or PWM-style output write
+  anywhere. **Likely explained**: a separate, real Nuvoton M031TD2AE (Arm Cortex-M0, 12× 16-bit
+  PWM channels) MCU is confirmed to exist on the same board (see
+  [Firmware Architecture § Board hardware](firmware-architecture.md#board-hardware)) — a strong
+  candidate for the actual heater driver, fully explaining the TLSR8258-side absence. **Not
+  proven at the firmware level** — the M031's own flash hasn't been dumped or analyzed at all;
+  that's a new target requiring standard Arm/SWD tooling, not the Telink TC32 setup used
+  everywhere else in this repo. The logic-analyzer work below would still help confirm which
+  physical chip actually switches the heater current, independent of a firmware dump.
 - **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
   flash address `0`) and an erase-target decision between address `0` and a staging area at
   `0x40000` are confirmed (see [Firmware Architecture](firmware-architecture.md)), but no evidence exists in this image

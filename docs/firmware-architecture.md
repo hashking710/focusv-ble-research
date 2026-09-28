@@ -40,6 +40,23 @@ for this exact part, which turns out to matter a lot in practice — see the cal
 
 See [Methodology](methodology.md) for tooling gotchas specific to this chip/module combination.
 
+## Board hardware
+
+Everything else in this document is about the TLSR8258's own firmware. Identifying the other
+chips on the board (from real part photos) turned out to matter for scoping *what's even in this
+firmware image in the first place*:
+
+| Chip | Role |
+|---|---|
+| **Telink TLSR8258** | Main BLE SoC — everything this document otherwise describes: session/BLE handling, the PID control loop, display, flash. |
+| **Nuvoton M031TD2AE** (Arm Cortex-M0, 64KB flash, 12× 16-bit PWM channels) | A second, independently-programmable MCU on the same board. Not yet dumped or analyzed — different vendor toolchain entirely (standard Arm, not Telink TC32). Its 12 PWM channels make it a strong candidate for the actual heating-element driver (see [Open Questions](open-questions.md)) — the TLSR8258 image was exhaustively searched for PWM/duty-varying output and found none, which is fully consistent with that logic living on this chip instead. |
+| **SouthChip SC8922A** | A 2-3 cell Li-ion boost battery charger IC. Fixed-function analog/mixed-signal silicon — no firmware, not a candidate for anything BLE- or update-related. |
+
+**Practical implication**: if you're looking for heater-output logic, temperature-driven duty
+cycles, or anything else this document says was exhaustively searched for and not found in the
+TLSR8258 image, the Nuvoton M031 is the next place to look — a genuinely separate analysis effort
+from everything else in this repo so far.
+
 ## File format
 
 The distributed `.bin` has a **40-byte custom header**:
@@ -136,7 +153,12 @@ An exhaustive search — the entire cooperative scheduler, every GPIO write call
 Telink analog-register bus, the (confirmed-empty) interrupt vector table — found **no
 duty-varying or PWM-style output write anywhere in this image**. Every GPIO write either passes a
 boot-time constant or is part of the confirmed ADC sensor-read sequence; none vary with live
-sensor/timer state. See Open Questions for what this most likely implies.
+sensor/timer state.
+
+This absence is now well explained rather than just a negative result: see
+[Board hardware](#board-hardware) above — a separate Nuvoton Cortex-M0 MCU with 12 PWM channels
+sits on the same board, not yet analyzed, and is the far more likely home for this logic. See
+[Open Questions](open-questions.md) for the current state of this specific item.
 
 ## Thermal safety / fault chain
 
