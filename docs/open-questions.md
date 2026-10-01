@@ -46,6 +46,16 @@ against these exact gaps rather than "more reverse engineering in general."
   lives at a different address than both other devices'). Full details in
   [Firmware Architecture § Custom firmware: device-native hardware ramp](firmware-architecture.md#custom-firmware-device-native-hardware-ramp)
   and in the patch repo itself, [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware).
+- **A second, different-shaped gap in the Carta 2 ramp patch, caught in a later audit before any
+  hardware testing happened.** The shipped 5-site version never suppressed two screen elements
+  (`FUN_0000dcac`, `FUN_0000e300`) that the real live-heating refresh routine calls unconditionally
+  every tick — `dcac` draws directly over part of the patch's own graph area. Found by reading that
+  routine's full real call sequence rather than trusting the original 3-site design's scope. Fixed
+  with two more call-site patches (now 7 total), the graph enlarged using the screen space this
+  freed, and every other patch site's replacement bytes regenerated fresh since adding code shifted
+  their targets. Full details in
+  [Firmware Architecture § Custom firmware](firmware-architecture.md#custom-firmware-device-native-hardware-ramp)
+  and the patch repo's Carta 2 README.
 
 ## Firmware
 

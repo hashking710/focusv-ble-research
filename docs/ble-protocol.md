@@ -130,7 +130,9 @@ unless noted otherwise.
 | `0x80` | 6 | Save/select screensaver slot metadata (not the image transfer itself) | `[80,06, a, b, c, 80]` — 3 params, exact roles unconfirmed |
 | `0xFA` | 7 | Session-log **request** | `[FA,07, startHi,Lo, endHi,Lo, FA]` — asks for records start..end (1-based; end = lifetime flower + concentrate count from `0xAA`). Answered by `0xFC`/`0xFF` notifies. |
 | `0xFD` | 7 | Session-log "mark as read" | Same shape as `0xFA` — sent by the official app after it has stored the records server-side |
-| `0xAE` | 4 | Factory reset | `[AE,04,AE,AE]` — confirmed working on real hardware |
+| `0xAE` | 4 | **Device-specific — see below** | `[AE,04,AE,AE]` — confirmed working on real hardware |
+| `0xAC` (hidden, not sent by the official app) | var | Stage a custom Bluetooth name (Aeris/Sport) | `[AC, n, name...]` — up to 17 chars; stages only, applies nothing until `0xAF` |
+| `0xAF` (hidden, not sent by the official app) | var | Apply the staged Bluetooth name (Aeris/Sport) | `[AF, n, name...]` — up to 12 more chars (29 total); applies via the device's own BLE stack, doesn't disconnect |
 | `0xCD` | 6 | Request calibration status | `[CD,06,DD,00,00,CD]` — response via `0xC2` notify (not consistently observed to fire from a bare status query — see [Open Questions](open-questions.md)) |
 | `0xC1` | 6 | Trigger recalibration (overwrites factory calibration data) | `[C1,06,77,00,00,C1]` — device must be below 120°F/48°C first (checked client-side) |
 | `0x81` | 6 | Screensaver status refresh query | `[81,06,44,00,00,81]` — answered by the `0x82` notify |
@@ -139,6 +141,41 @@ unless noted otherwise.
 Real firmware OTA is a **separate wire protocol** entirely — see its own section below. Do not
 experiment with the OTA characteristic casually; malformed writes risk corrupting the device's
 flash.
+
+### `0xAE` is not the same command on every device
+
+`[AE,04,AE,AE]` does something genuinely different depending on the device — confirmed by firmware
+decompile on all three, not just inferred from behavior:
+
+- **Carta 2**: a real, confirmed **factory reset**. Rewrites the flower/concentrate preset tables
+  (custom slot + 5 ranked slots, both °F and °C, plus durations) back to their firmware-default
+  values, then runs further reset routines (presumed LED/screensaver/flash-save, not individually
+  traced). This is the device this project actually recovered using `0xAE`, live, after a
+  screensaver-related incident.
+- **Aeris / Carta Sport**: restores the device's **advertised Bluetooth name** to its hardcoded
+  default ("AERIS" / "CARTA SPORT") and deliberately disconnects — it is **not** a factory reset on
+  these two devices, despite `0xAE` initially appearing to power off a Sport during early testing.
+  That observation is now fully explained: the deliberate disconnect looked like a power-off from
+  the outside.
+
+On Aeris/Sport, `0xAC` (stage a name) and `0xAF` (apply the staged name — a completely different
+context from the `0xAF` *marker byte* used inside `0xCC` session-stop packets, see above) are the
+real custom-rename mechanism; `0xAE` is specifically the "restore factory default name" case of the
+same underlying feature, not a separate reset path. Applying a name (`0xAF`) or restoring the
+default (`0xAE`) both arm the same deferred-settings-save mechanism used for ordinary settings
+persistence (~5 second delay) — staging a name with `0xAC` alone does not.
+
+Carta 2's factory-reset default values, confirmed from the real `PROD-111224` decompile (matches
+live-captured values):
+
+| | Custom | Slots 1-5 |
+|---|---|---|
+| Flower °F | 330 | 340, 350, 370, 390, 410 |
+| Flower °C | 166 | 171, 177, 188, 199, 210 |
+| Concentrate °F | 475 | 480, 495, 515, 535, 565 |
+| Concentrate °C | 246 | 248, 257, 268, 279, 296 |
+| Flower duration (s) | 240 | 240 ×5 |
+| Concentrate duration (s) | 60 | 60, 55, 50, 45, 40 |
 
 ### `0x11` — settings apply / session sync / power off (full breakdown)
 

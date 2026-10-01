@@ -222,6 +222,36 @@ A genuine, ground-truth-confirmed safety subsystem, separate from the PID contro
 This subsystem only *reads and checks* — it does not appear to drive the heater output itself.
 Any firmware modification should leave this path untouched.
 
+## AES-128 telemetry encryption
+
+The `0xDD` telemetry notify (measured temperature, power output, controller-state byte, and the
+three PID terms — the data behind the official app's hidden "Real-Time Results" dialog) **is
+AES-128-encrypted before transmission, on all three devices**. Confirmed via a clean decompile of
+each device's engine-invoke function, which resolves the hardware AES block's three arguments
+unambiguously: a key (copied into a fixed MMIO key-load window), the plaintext telemetry struct,
+and a ciphertext-out buffer read back once a done bit is set — not a software cipher, a real
+on-chip AES-128 peripheral (MMIO control register, 16-byte key-load window, data port).
+
+**The key material is not a secret in any meaningful sense.** For both Carta 2 and Carta Sport, the
+16 "key" bytes were confirmed to sit in the middle of an ordinary ascending calibration-curve
+lookup table already resident in flash for an unrelated purpose — the firmware reuses
+already-present calibration data as a de-facto key rather than allocating a dedicated random
+secret. Reads as obscuring the raw telemetry from casual BLE sniffing (hence "hidden" in the
+official app), not a real security boundary — consistent with there being no authentication,
+rotation, or per-session key derivation anywhere in this path. Carta 2's and Sport's extracted keys
+are confirmed different from each other.
+
+The Aeris key could **not** be extracted the same way, and the reason is itself a confirmed,
+interesting finding rather than a gap: the boot-time flash→RAM `.data` copy loop's declared range,
+taken literally, overruns the end of the downloadable OTA image by exactly 24 bytes on both Carta 2
+and Aeris (Sport's copy loop doesn't overrun at all, which is why its key extracted cleanly). The
+consistent 24-byte shortfall across two structurally different builds reads as **factory-provisioned,
+per-unit calibration data deliberately excluded from the OTA-downloadable image** — so a firmware
+update can't clobber per-device calibration during the copy. Carta 2's key read sits comfortably
+clear of this excluded tail; Aeris's key read falls entirely inside it. The only way to recover the
+real Aeris key is a live RAM or flash read from real hardware, not more static analysis of the
+downloadable image.
+
 ## Physical button input
 
 The GPIO register map (see [Chip and toolchain](#chip-and-toolchain)) is a per-port-group block,
@@ -249,6 +279,31 @@ registers at once and calls a helper with char-valued parameters (matching this 
 general pattern of using ASCII-char op-codes, e.g. `'t'`/`'v'` for OTA). Plausibly a
 button-combo-gated mode/output change; not fully traced.
 
+**Per-device click/gesture tables, fully decoded** (device state numbering and event numbers
+confirmed by decompile, not inferred from behavior alone):
+
+Aeris and Sport share the same single-button state machine and the same event numbering almost
+exactly (device states: 0=off, 1=on/idle, 7=quick-heat-from-off, 8=asleep):
+
+| Clicks/gesture | Sport/Aeris event | Action |
+|---|---|---|
+| 1 | 7 | idle: cycle preset slot. Session: n/a |
+| 2 | 8 | — |
+| 3 | 9 | cycle LED preset rank |
+| 4 | 10 | show battery bars (LED effect 6) |
+| 4 + hold | 12 | toggle low-power mode |
+| 5+ / BLE off | 11 | power off |
+| 2 + hold 2-2.5s | 13 | quick-heat from off → state 7 |
+| hold ~2s | 15 (Sport) / 0xf (Aeris) | stop (session must be active) |
+| any BLE write | 17 | wakes device from sleep — how the app's "keep awake" works |
+| charger plug/unplug | 21 / 22 | LED effect + buzz |
+
+Carta 2 has a genuinely different, 3-input scheme (main button plus two secondary inputs, decoded
+from a packed 3-bit state through a dedicated jump table) — the only one of the three with
+dedicated **up/down controls with hardware auto-repeat** (secondary inputs held down repeat every
+~80ms after an initial ~0.5s delay), used to adjust custom temperature/duration values directly
+from the device without a connected app.
+
 ## Display
 
 A standard ST7789-family TFT LCD driver (240×240 active window on a 240×320 physical GRAM,
@@ -263,6 +318,49 @@ Confirmed drawing primitives, usable directly from firmware with no BLE transfer
 
 A local firmware draw call using these primitives is effectively instant compared to a full
 BLE-uploaded screensaver image (which takes thousands of individual 16-byte writes).
+
+**The live-heating screen, fully decoded.** One routine (`FUN_0000fa1c`) assembles the entire
+live-heating screen every tick, calling five drawing functions in a fixed sequence — this is the
+routine the custom ramp patch's display changes hook into (see
+[Custom firmware](#custom-firmware-device-native-hardware-ramp) below), and decoding it fully is
+what caught a real gap in that patch (two of these five calls weren't being suppressed, see
+below). Left to right on screen: a dual-unit target-temperature header (showing the target in
+whichever unit the device is currently set to), the large primary measured-temperature number with
+its progress gauge and a charging-aware icon, and a battery-percentage readout (3 digits plus a
+5-step battery-bar icon, or a distinct charging-animation primitive while plugged in) at the far
+right. A separate branch, taken only around session start/end, swaps in a transition sequence
+instead of this normal five-call path.
+
+Screen/menu navigation (Carta 2 only) is a confirmed state machine: a current-screen field (0-16)
+dispatched through a jump table, with real resolved meanings for every number — heating,
+splash/transition screens, home/idle, two "edit custom value" screens wired directly to the preset
+struct fields the up/down buttons adjust, and several scrollable menu-list screens. A shared
+"cancel/back out" sequence is reachable identically from four different idle screens on a
+long-hold gesture.
+
+## Battery and charging
+
+Genuinely different mechanisms per device, confirmed rather than assumed identical:
+
+- **Carta Sport**: a real fuel-gauge IC (bit-banged I²C, register map consistent with the
+  CW2217 family — not confirmed from a board photo). A dedicated battery-gauge routine averages
+  three ADC channels every tick, integrates a charge counter, and writes both a 0-100% value and a
+  bar count (thresholds roughly 74/49/24%) into the shared runtime struct.
+- **Aeris**: **no fuel-gauge chip found** — estimates charge from voltage alone, averaging a small
+  raw-ADC sample block on a slower cadence. Confirmed bar thresholds (<25%/25-49%/50-74%/≥75% →
+  1-4 bars) match the documented LED error-colour table exactly (the same color codes used for
+  low-battery/empty-battery alerts double as the battery-bar display color).
+- **Carta 2**: less thoroughly traced than the other two; no dedicated battery-percentage routine
+  was separately pinned down for this device specifically, though the stock live-heating screen
+  does display one (see [Display](#display) above, `FUN_0000db40`).
+- **Charger detection** (Sport, and presumably similar on Aeris): a dedicated GPIO pin, debounced
+  over several consecutive ticks in each direction, flips a "charging" flag used both for the BLE
+  status byte and a plug/unplug LED+buzz cue.
+- **Shared charging hardware**: a fixed-function Li-ion boost charger IC on the board (no
+  firmware of its own) — this rules it out as any kind of programmable "battery MCU," relevant to
+  why the app's `*BatteryUpdateServer` manifest config fields (present but always 302-redirecting,
+  never actually published on any device family) are presumed vestigial rather than pointing at a
+  real updatable component.
 
 ## Flash layout
 
@@ -384,6 +482,20 @@ both open until then, for all three devices.
 - Has a screen — the patch replaces the live-heating display with a graph; see
   [Display](#display) above for the confirmed drawing primitives this uses
   (`FUN_000074d0` solid-fill, `FUN_00007e2c` glyph blit, digit table at `0x1e6cc`).
+- **A third mistake, caught in a later audit of this patch after it had already shipped** (briefly —
+  never flashed by anyone): the live-heating screen refresh routine (`FUN_0000fa1c`) calls five
+  screen elements unconditionally every tick, not three. The original patch suppressed the main
+  gauge (`FUN_0000d3c0`), the countdown timer (`FUN_0000d048`), and the preset badge
+  (`FUN_0000e42c`) — but missed `FUN_0000dcac` (a second, structurally parallel gauge/digit
+  display, confirmed by decompile to draw directly over part of the graph's own screen area) and
+  `FUN_0000e300` (a small status icon in the same row as the already-suppressed countdown/badge).
+  Both were still running unconditionally, every tick, regardless of ramp state. Found by reading
+  `FUN_0000fa1c`'s real call sequence directly rather than trusting the original three-site design,
+  and fixed the same way as the other two suppressed elements. Freeing `dcac`'s screen region also
+  let the graph grow from 150×140 to 220×164 pixels, using real confirmed free space instead of an
+  earlier conservative guess. One related branch (`FUN_0000e2b4`, an alternate full-width banner
+  gated on two struct flags) was deliberately left unpatched and documented rather than guessed at —
+  see the patch repo's Carta 2 README for the full reasoning.
 
 ### Aeris — confirmed addresses
 

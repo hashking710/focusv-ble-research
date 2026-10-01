@@ -45,6 +45,7 @@ this one is how every address and protocol detail it relies on was found.
 | **[`tools/ble-tester.html`](tools/ble-tester.html)** | A lower-level BLE opcode tester/logger |
 | **[`tools/ota-flash.html`](tools/ota-flash.html)** | Pushes a firmware file to the device over Bluetooth using the real OTA wire protocol — works for a patched build or for pushing the original stock firmware back to fully revert |
 | **[`tools/ghidra-scripts/`](tools/ghidra-scripts/)** | The Ghidra scripts used during firmware analysis (`DumpTC32.java`, `FindXrefs.java`, `dump_tc32.py`) |
+| **[`tools/render_mockups.py`](tools/render_mockups.py)** | Renders a preview of the Carta 2 ramp-graph screen and the Aeris/Sport LED gradient, by re-implementing the patch's own drawing logic in Python against your own firmware dump — used to generate the mockup images in [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) |
 
 No build step for the HTML tools — open directly in a browser that supports Web Bluetooth
 (Chrome or Edge; desktop or Android — iOS Safari doesn't implement Web Bluetooth).
