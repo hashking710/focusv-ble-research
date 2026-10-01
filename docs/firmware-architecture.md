@@ -57,35 +57,31 @@ firmware image in the first place*:
 | Chip | Role |
 |---|---|
 | **Telink TLSR8258** | Main BLE SoC — everything this document otherwise describes: session/BLE handling, the PID control loop, display, flash. |
-| **Nuvoton M031TD2AE** (Arm Cortex-M0, 64KB flash, 12× 16-bit PWM channels) | A second, independently-programmable MCU on the same board. Not yet dumped or analyzed — different vendor toolchain entirely (standard Arm, not Telink TC32). Its 12 PWM channels make it a strong candidate for the actual heating-element driver (see [Open Questions](open-questions.md)) — the TLSR8258 image was exhaustively searched for PWM/duty-varying output and found none, which is fully consistent with that logic living on this chip instead. |
+| **Nuvoton M031TD2AE** (Arm Cortex-M0, 64KB flash, 12× 16-bit PWM channels) | A second, independently-programmable MCU on the same board. Not yet dumped or analyzed — different vendor toolchain entirely (standard Arm, not Telink TC32). **Not the heater driver** — that's now confirmed to run on the TLSR8258 itself (see [Where the heater output is driven](#where-the-heater-output-is-driven) below), which was this chip's leading candidate role. Its actual job is still open. |
 | **SouthChip SC8922A** | A 2-3 cell Li-ion boost battery charger IC. Fixed-function analog/mixed-signal silicon — no firmware, not a candidate for anything BLE- or update-related. |
 
-**Practical implication**: if you're looking for heater-output logic, temperature-driven duty
-cycles, or anything else this document says was exhaustively searched for and not found in the
-TLSR8258 image, the Nuvoton M031 is the next place to look — a genuinely separate analysis effort
-from everything else in this repo so far.
+**Correction (superseded by a newer firmware build's analysis):** this section previously named
+the M031 as the leading candidate for driving the heating element, on the reasoning that an
+exhaustive search of the TLSR8258 image found no PWM/duty-varying GPIO write, and the M031's 12
+PWM channels made it the natural place for that logic to live instead. Disassembling the device's
+actual current firmware (`PROD-111224` — the originally-analyzed `PROD-071024` turned out to be a
+stale build no longer served to real devices) found the real heater-output routine after all: it
+didn't show up in the earlier search because it isn't a PWM peripheral write, it's a plain GPIO
+on/off toggle gated by a software tick-window counter (functionally a software-timed slow PWM) —
+a different code shape than what that search was looking for. See
+[Where the heater output is driven](#where-the-heater-output-is-driven) for the confirmed details.
+The M031's real role is therefore open again, not resolved — this document no longer has a leading
+theory for it.
 
-**Why heater rather than display, specifically.** The display isn't a live possibility for the
-M031 — it's already fully accounted for on the TLSR8258 side (see [Display](#display) below):
-the exact real ST7789 command set and gamma tables, driven directly over the TLSR8258's own SPI
-peripheral, confirmed by literal register-address match. A more specific argument for heater
-control: the confirmed PID loop (see [below](#session-state-machine-and-pid-control-loop))
-computes a real output value every tick that has no on-chip destination (the exhaustive PWM/GPIO
-search below found nowhere for it to go) — a second MCU with 12 PWM channels, physically
-positioned near the board's high-current leads rather than near the display connector, is the
-natural place for that value to go.
-
-**Every standard external communication peripheral on the TLSR8258 has now been checked and ruled
-out as the transport to the M031.** A literal-pool scan against the complete real register map (all
-345 entries from the SDK's `register_8258.h` — I2C, SPI, MSPI, UART, clock/reset, I2S/DMIC, not
-just the GPIO/UART/SPI subset checked earlier) found: SPI traces entirely to the display (above);
-MSPI traces entirely to the on-chip SPI-NOR flash controller; I2C has zero real hits. The UART is
-genuinely initialized and enabled at boot, but its data and status registers — the only two
-registers any transmit or receive call could possibly use — have **zero references anywhere in the
-firmware image**. That rules the UART out as a data link, rather than leaving it as an open lead:
-every one of its register hits is already fully accounted for by the three boot-time
-init/enable/mode-config calls, with nothing left unsearched. See [Open Questions](open-questions.md)
-for what that leaves open.
+**Every standard external communication peripheral on the TLSR8258 has been checked as a possible
+transport to the M031**, for whatever its real job turns out to be. A literal-pool scan against the
+complete real register map (all 345 entries from the SDK's `register_8258.h` — I2C, SPI, MSPI,
+UART, clock/reset, I2S/DMIC) found: SPI traces entirely to the display (confirmed — see
+[Display](#display) below); MSPI traces entirely to the on-chip SPI-NOR flash controller; I2C has
+zero real hits. The UART is genuinely initialized and enabled at boot, but its data and status
+registers — the only two registers any transmit or receive call could possibly use — have **zero
+references anywhere in the firmware image**, ruling it out as a data link too. See
+[Open Questions](open-questions.md) for what that leaves open.
 
 ## File format
 
@@ -188,18 +184,29 @@ accumulator, among other fields. Anything hooking this re-init path needs to acc
 (e.g. a narrower, purpose-built re-init if only the target temperature should change without
 resetting the session log).
 
-### Where the heater output itself is *not*
+### Where the heater output is driven
 
-An exhaustive search — the entire cooperative scheduler, every GPIO write call site, the
-Telink analog-register bus, the (confirmed-empty) interrupt vector table — found **no
-duty-varying or PWM-style output write anywhere in this image**. Every GPIO write either passes a
-boot-time constant or is part of the confirmed ADC sensor-read sequence; none vary with live
-sensor/timer state.
+**Confirmed: all three devices (Carta 2, Aeris, Carta Sport) regulate the heater directly on the
+TLSR8258 itself** — there is no second-chip handoff. A dedicated output routine, called every tick
+from the main per-tick dispatcher, toggles a single GPIO pin on or off depending on where the
+current tick falls within a fixed-length window (500 ticks), comparing against an "on-time" value
+the PID step computes and clamps each cycle (roughly 5-449 out of that window) — a software-timed
+slow PWM, not a hardware PWM-peripheral write. That's why the original search (looking for a
+peripheral duty-register write) came up empty: the real mechanism is an ordinary GPIO toggle,
+just one gated by a tick-window comparison instead of a boot-time constant.
 
-This absence is now well explained rather than just a negative result: see
-[Board hardware](#board-hardware) above — a separate Nuvoton Cortex-M0 MCU with 12 PWM channels
-sits on the same board, not yet analyzed, and is the far more likely home for this logic. See
-[Open Questions](open-questions.md) for the current state of this specific item.
+| | Carta 2 | Carta Sport | Aeris |
+|---|---|---|---|
+| Heater GPIO pin | `0x800593` bit 1 | `0x80059b` bit 4 | `0x800583` bit 4 |
+| On-time clamp range | 5-449 | 6-449 | 6-449 |
+| Window length | 500 ticks | 500 ticks | 500 ticks |
+
+The measured temperature feeding this loop comes from a dedicated platinum RTD (PT1000) on all
+three models, not the heater coil's own resistance — converted via the standard
+Callendar-Van Dusen equation with the same scaled platinum constants on every device.
+
+This resolves what was previously an open question pointing at the Nuvoton M031 (see
+[Board hardware](#board-hardware) above) — that theory is retired.
 
 ## Thermal safety / fault chain
 
@@ -306,6 +313,160 @@ update: receive and verify the new image at the `0x40000` staging area, then som
 not-yet-located finalize step** erases address `0` and copies the verified bytes down, before a
 reboot. See [Open Questions](open-questions.md) — this finalize step, the real GATT write-callback
 that receives OTA bytes, and where the erase-trigger flag gets set are all still unconfirmed.
+
+## Custom firmware: device-native hardware ramp
+
+Stock firmware has no native "ramp" concept — the only way to sweep temperature over time is for
+a client to send a series of timed `0xCC` writes (see [`tools/focusv-controller.html`](../tools/focusv-controller.html)'s
+Ramp tab). A patch adds a genuine device-native ramp instead: waypoints saved once to flash, then
+run autonomously by the firmware's own tick loop with no client connected. **This is now a
+complete, shipped, independently-verified patch for all three devices (Carta 2, Aeris, Carta
+Sport)** — the full source, patch bytes, and per-device build fingerprints live in the companion
+[focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) repo; what follows here
+is the confirmed architecture behind it, not the patch itself (see that repo's `LEGAL.md` for why
+the split exists).
+
+**Mechanism, same shape across all three devices:**
+
+- `0xCC` writes with marker `0xB1`-`0xB5` (in place of the normal `0xA5`/`0xAF`/`0x66`) save that
+  packet's already-parsed temp + duration as ramp waypoint 1-5 into a dedicated flash sector.
+- `0xCC` with marker `0xA5` carrying a fixed sentinel temperature far outside any real range
+  (150°F or 160°F, scale forced to Fahrenheit) arms the ramp instead of starting a normal session
+  at that unreachable target. A trampoline around the confirmed per-tick orchestrator then
+  advances through the saved waypoints on its own, each tick.
+- All five new marker values are otherwise unused anywhere in any of the three stock images, and
+  both the waypoint-save and the sentinel-start writes are ordinary, harmless `0xCC` packets on
+  unpatched firmware.
+
+**A real mistake, caught before it shipped, worth recording precisely rather than smoothing over**:
+an earlier pass through this same work identified the Carta 2 orchestrator as `FUN_0000ad4c`,
+reached from a call site at `0x6e2e`. Re-deriving this fresh against the current firmware build
+found `0xad4c` is **not a function at all** in that build — it was carried over from an older,
+different firmware build without being re-checked. The real orchestrator is `FUN_0000af2c`,
+confirmed by direct decompile (it operates on the session-active flag exactly as expected, and
+calls the already-confirmed RTD-conversion and tolerance-check routines). The call site, however,
+genuinely is `0x6e2e` — Ghidra's auto-analysis simply never wraps the surrounding code in a named
+function for this build (a known gap with this chip's Ghidra module, see [Methodology](methodology.md)),
+so there was no cross-reference to follow. It was confirmed instead by generating the exact
+correct `tjl 0xaf2c` instruction encoding, with the real assembler, at *every possible position* in
+the entire firmware image, and byte-comparing against the real file — exactly one match, at
+`0x6e2e`. The same address as the stale notes claimed; only the function being called from it was
+wrong. This exhaustive-scan technique is now the standard fallback whenever a confirmed function
+has no discoverable caller via normal cross-reference tooling — it was used again for both Aeris
+and Carta Sport below.
+
+A second mistake of the same shape was caught in the marker-dispatch design itself: the original
+plan patched a single leaf of the `0xA5`/`0xAF`/`0x66` compare-and-branch chain (the `0x66` case
+specifically). That works for replicating `0x66`, but the five new waypoint markers never match
+any of the three existing comparisons, so patching one leaf means they're never seen at all — the
+packet just falls through the whole chain untouched. The fix is architectural, not just a
+corrected address: the patch intercepts the marker *byte load* that runs unconditionally before
+any of the three comparisons, not any individual leaf of the chain.
+
+**Not yet tested on real hardware**, for any of the three devices — gated on recovery/flashing
+tooling (see [Hardware setup](hardware-setup.md)). The exact real-time meaning of one "tick" in
+each firmware's own scheduler (assumed ≈1 second, never independently clocked against a wall
+clock) and whether a long ramp can outlast the device's own built-in session-duration ceiling are
+both open until then, for all three devices.
+
+### Carta 2 ("Quantum") — confirmed addresses
+
+- Central runtime struct: `0x843028`. Session-active `+0x1`, mode flag `+0x7` (0=flower,
+  1=concentrate), live PID target `+0x20`/`+0x22`, measured temperature `+0x1c` (confirmed via
+  the RTD/Callendar-Van Dusen conversion routine, `FUN_00008b08`, writing directly into this
+  field), custom-value temperature `+0x36`/`+0x4e` (Celsius).
+- Per-tick orchestrator: `FUN_0000af2c`, called from `0x6e2e` (see above).
+- `0xCC` handler real marker-dispatch call site: `0x11d96`, inside a function Ghidra's current
+  auto-analysis calls `FUN_00011d82` (part of a larger merged-function cluster — see
+  [Methodology](methodology.md)). The real handler chain is `FUN_000115f2` (top-level dispatcher)
+  → `FUN_00011cc4` (temp/duration field parsing, confirmed via decompile) → tail-jumps through two
+  small intermediate functions → the marker-load-and-compare block at `0x11d96`-`0x11db1`.
+- Has a screen — the patch replaces the live-heating display with a graph; see
+  [Display](#display) above for the confirmed drawing primitives this uses
+  (`FUN_000074d0` solid-fill, `FUN_00007e2c` glyph blit, digit table at `0x1e6cc`).
+
+### Aeris — confirmed addresses
+
+Same overall shape as Carta 2, different binary, different addresses — none reused without
+independent re-confirmation. Aeris has no screen; ramp progress shows as a cool-blue-to-hot-amber
+color gradient across its 4 individually-addressable RGB LEDs instead.
+
+- Central runtime struct: `0x8430e4` (distinct from the device/session-state struct at `0x84308c`
+  used by the button/event dispatcher and the LED-push gate — two separate confirmed structs, not
+  one).
+- Mode flag `+0x6`: **1=flower, 2=concentrate** — a different convention from Carta 2's 0/1,
+  confirmed by direct observation rather than assumed to match.
+- Measured temperature `+0x2a`, custom-value temperature `+0x30`/`+0x48` (confirmed real
+  Fahrenheit when the incoming packet is Fahrenheit-scale — the `0xCC` handler has a scale-byte
+  branch to a Fahrenheit-specific code path that writes this field unconverted, then tail-jumps
+  back into the shared body; both branches were traced to confirm they reconverge on the same
+  marker-dispatch chain regardless of which was taken).
+- Live PID target `+0x2c`/`+0x2e` — this one is **reasoned from converging facts, not one traced
+  instruction**: confirmed as what the stock "temperature reached" detector compares against the
+  measured field, and confirmed to be populated for preset-selected sessions via a direct,
+  unconverted copy from the preset table (whose own factory-default values — 300, 350, 370, 390,
+  410 — are unmistakably real °F). The exact stock code path that populates it for a *custom-value*
+  session specifically was traced extensively (an atomizer-calibration routine, a glide/smoothing
+  function, several rank-dispatch jump table entries) without finding one clean "convert and
+  write" function — recorded as a real, specific gap rather than papered over, even though the
+  two converging facts above are enough to be confident in the field's identity and unit.
+- Per-tick orchestrator: body starting `0x8154`, called from `0x6464` inside the main scheduler
+  loop (confirmed via the same exhaustive-scan technique described above — one match in the
+  entire 80,684-byte firmware).
+- Marker-dispatch load: `0xb490`.
+- LED buffer `0x8431dc` (4×RGB), brightness byte `0x84562c+1`, push routine body starting `0x90bc`.
+  Its push-gate flag (`0x84308c+0xe`) genuinely does control whether anything gets pushed to
+  hardware at all here (unlike Sport, below) — the patch deliberately forces it open before every
+  push during a ramp.
+- Flash primitives, independently confirmed (Carta 2's addresses for these do not exist as
+  functions in this binary): read `0xab8`, erase `0xa1c`, write `0xa5c`.
+- ROM divide helper: `0x1ac` — same address as Carta 2, confirmed still valid here.
+
+### Carta Sport — confirmed addresses
+
+Same overall shape again, with two real divergences from Aeris caught by re-checking rather than
+assuming the pattern holds:
+
+- Central runtime struct: `0x8426ec`, shared by both the `0xCC` handler and the tick function
+  (confirmed by resolving both functions' literal-pool pointers independently and finding they
+  match). Device/session-state struct: `0x842694`.
+- Mode flag `+0x6`: 1=flower, 2=concentrate — same convention as Aeris.
+- Measured temperature `+0x2a`, custom-value temperature `+0x30`/`+0x48` (confirmed real
+  Fahrenheit the same way as Aeris — the Fahrenheit-scale branch's field writes were read end to
+  end, not inferred by analogy to Aeris). Live PID target `+0x14`/`+0x16` — same "reasoned from
+  converging facts" status as Aeris's analogous fields.
+- Per-tick orchestrator: body starting `0x7c00`, called from `0x58b0` (exhaustive-scan confirmed,
+  90,860-byte firmware, one match).
+- Marker-dispatch load: `0xb002`.
+- LED buffer `0x8427f8` (**5**×RGB — confirmed hardware difference from Aeris's 4, via the push
+  routine's own loop-count), brightness byte `0x844b3c+1`, push routine body starting `0x8cf8`.
+  **Its gate architecture is genuinely different from Aeris's**, confirmed by reading both rather
+  than assumed identical: Sport's gate flag only controls an optional "reset buffer to black"
+  pre-step, and the actual hardware push loop runs unconditionally every call regardless of that
+  gate. The patch does not force anything open here, unlike Aeris.
+- Flash primitives, independently confirmed (neither other device's addresses apply): write body
+  starting `0xc0e8` (signature `addr, len, buf`), erase `FUN_0000c178(addr)` (issues SPI opcode
+  `0x20`, Sector Erase). No dedicated read primitive — flash is memory-mapped for reads here too.
+- **ROM divide helper: `0x1529c` — confirmed to be a completely different address from both
+  Carta 2 and Aeris's `0x1ac`**, which is confirmed absent as a function in this binary. The
+  single most consequential catch in this device's whole build process: reusing `0x1ac` unchecked
+  (easy to do, since it worked for two other devices already) would have meant every division the
+  patch performs jumped into unrelated code on a real device. Checked and confirmed absent before
+  writing any code that might have assumed otherwise.
+
+### Arming from the device's own physical button
+
+Carta 2 specifically: the sentinel-based trigger is source-agnostic — `ramp_tick()` only ever
+inspects the shared runtime struct's live target field each tick, and doesn't know or care how a
+150°F-equivalent value got there. Writing the sentinel into any one of a mode's 5 real
+session-preset slots (via the normal preset-table-write opcode) turns that slot into a physical
+trigger: selecting it on the device and starting a session with it — the same physical gesture
+used to start any other saved preset, no BLE involved — arms the ramp exactly as if the
+sentinel-carrying start command had been sent over Bluetooth. This permanently repurposes that
+slot until a real value is written back to it. Physical stop needs no special handling either —
+whatever clears the session-active flag already forces `ramp_tick()`'s own reset path, the same
+as a BLE-driven stop. The same mechanism applies unchanged to Aeris and Sport, since both share
+the identical wire packet format and the identical sentinel-field architecture.
 
 ## Open questions
 

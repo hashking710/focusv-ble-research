@@ -19,11 +19,13 @@ internal device-type strings the app uses:
 | `AERIS` | Aeris |
 | `CARTA` | Carta / Carta Classic (legacy, separate protocol — see below) |
 
-There is **no BLE-derivable way to tell Quantum/Aeris/Sport apart** — they share identical
-services, characteristics, and opcodes, and the official app itself can't distinguish them over
-BLE either. It relies on a one-time manual "select your device" step during pairing, stored in
-the user's cloud account, never transmitted over BLE. A from-scratch client has no way to
-recover this and has to ask the user directly.
+Quantum/Aeris/Sport share identical services, characteristics, and opcodes, but **the model
+can still be read over BLE**. The official app reads a model code from the standard User Data
+service (`0x181C`), characteristic `0x2A90`, on every connect, and buckets it by prefix:
+`D9*` = Quantum (Carta 2), `E5*` = Aeris, `S3*` = Sport. The serial number is in `0x2A8A` of the
+same service. `user_data` has to be listed in Web Bluetooth's `optionalServices` to reach it.
+(An earlier version of this document said this was impossible. That conclusion came from
+checking only Device Information's `0x2A24`, which the app never reads.)
 
 The legacy `CARTA` bucket is a **different, older protocol** (see the OTA section below for one
 concrete difference) and is not covered in detail here — modern "Carta 2" hardware speaks the
@@ -93,9 +95,11 @@ Even though the protocol is identical, the app's own UI gates two features by de
   most likely a hardware difference (display capability), not an app-side restriction.
 - **The 30-minute device/LED timeout option is Quantum-only.** Aeris/Sport cap out at 15 minutes
   for both timeouts.
+- **Device lock is Quantum-only** (main-screen "device control" row).
 
-Everything else (recalibration, vibration, Low Power Mode, general settings) is shared across
-all three.
+Everything else (LED presets, vibration, Low Power Mode, general settings) is shared across all
+three. Recalibration, the manual atomizer override and the live PID dialog are gated on the app's
+build profile (`appBuildType === 0`, internal builds), so the public app never shows them.
 
 ## Packet framing
 
@@ -112,18 +116,20 @@ unless noted otherwise.
 | `0xCC` | 16 | Extend an active session (~10s) | Same shape, `marker = (0x66, 0x0A)` two-byte pair. |
 | `0xCC` | 16 | Cancel / stop an active session | Same shape, `marker = 0xAF`. |
 | `0xCC` | 16 | Test-fire / short preview | Same shape, `marker = (0x66, 0x0A)`. |
+| `0xCC` | 16 | *Custom firmware only, beta* — save ramp waypoint 1-5 | Same shape, `marker ∈ {0xB1..0xB5}`. No-op (unrecognized) on stock firmware. See [Firmware Architecture](firmware-architecture.md#custom-firmware-device-native-hardware-ramp-beta). |
+| `0xCC` | 16 | *Custom firmware only, beta* — arm the device-native ramp | Same shape as the normal start row above, `marker = 0xA5`, but with a fixed sentinel temperature (150°F) in place of a real target. Behaves as an ordinary (if unreachable) start command on stock firmware. |
 | `0x77` | 12 | Pre-OTA date/time set (distinct from `0xDD`'s date/time write) | `[77,0C, yearHi,Lo, month, day, hour, minute, 0,0,0, 77]` |
 | `0xDD` | 12 | Set date/time (also triggers a full state-dump response — see Connection flow) | `[DD,0C, yearHi,Lo, month, day, hour, min, 00,00,00, DD]` |
 | `0x11` | 12 | Apply device settings / session sync / power off | See full breakdown below |
-| `0xD1` | 7 | Device/LED timeout | `[D1,07, valA_hi,Lo, valB_hi,Lo, D1]` — two independent 2-byte fields |
-| `0xDE` | 4 | Set atomizer/flow value | `[DE,04, value, DE]` — value ∈ {160,96,80,64,0} |
+| `0xD1` | 7 | Device/LED timeout | `[D1,07, ledHi,Lo, deviceHi,Lo, D1]` — **LED timeout first**, device timeout second, in seconds (official choices 60/300/600/900, plus 1800 on Quantum) |
+| `0xDE` | 4 | Manual atomizer-type override (internal-only menu in the official app) | `[DE,04, code, DE]` — 0 = auto-detect, 160 = flower, 96/80 = concentrate (old), 64 = concentrate (new). Current override is reported by the `0xDF` notify. |
 | `0x88` | 19 | Save flower session-preset table (5 slots) | See "Session presets" below |
 | `0x66` | 19 | Save concentrate session-preset table (5 slots) | Same shape, concentrate side |
 | `0xEE`/`0xE1`/`0xE2`/`0xE3`/`0xE4` | 20 | Save LED preset, ranks 1-5 | See "LED presets" below |
 | `0x83` | 6 | Erase screensaver | `[83,06, slot, 00,00, 83]` — slot: 1=primary, 2=secondary, 3=both |
 | `0x80` | 6 | Save/select screensaver slot metadata (not the image transfer itself) | `[80,06, a, b, c, 80]` — 3 params, exact roles unconfirmed |
-| `0xFA` | 7 | Session-log retrieval: progress ack | `[FA,07, idxHi,Lo, totalHi,Lo, FA]` |
-| `0xFD` | 7 | Session-log retrieval: completion ack | Same shape as `0xFA` |
+| `0xFA` | 7 | Session-log **request** | `[FA,07, startHi,Lo, endHi,Lo, FA]` — asks for records start..end (1-based; end = lifetime flower + concentrate count from `0xAA`). Answered by `0xFC`/`0xFF` notifies. |
+| `0xFD` | 7 | Session-log "mark as read" | Same shape as `0xFA` — sent by the official app after it has stored the records server-side |
 | `0xAE` | 4 | Factory reset | `[AE,04,AE,AE]` — confirmed working on real hardware |
 | `0xCD` | 6 | Request calibration status | `[CD,06,DD,00,00,CD]` — response via `0xC2` notify (not consistently observed to fire from a bare status query — see [Open Questions](open-questions.md)) |
 | `0xC1` | 6 | Trigger recalibration (overwrites factory calibration data) | `[C1,06,77,00,00,C1]` — device must be below 120°F/48°C first (checked client-side) |
@@ -203,8 +209,11 @@ byte 2:  atomizer/session state:  0xA0=flower/current, 0x60/0x50=concentrate/old
                                     (the atomizer *generation* — 'old' atomizers are open-loop
                                     and don't report TCR/PID telemetry at all; 'new'/'max' do)
 byte 3:  temperature scale:       0x11=°F, 0x22=°C
-byte 4:  packed nibble pair:      hi = active flower preset ranking (0-5), lo = concentrate
-byte 5:  heating-active flag/code (boolean; exact non-zero semantics beyond "on" unresolved)
+byte 4:  packed nibble pair:      hi = active flower preset ranking (0-5), lo = concentrate.
+                                    With a rank of 1-5, the device heats to that slot of the
+                                    preset table; bytes 8-11/14-15 only apply at rank 0.
+byte 5:  seconds remaining in the running session (0 = idle) — the official app shows it as
+                                    its m:ss countdown
 byte 6-7:  live measured temperature, in the device's current display unit — no conversion
                                     needed. Confirmed via a real capture: idle baseline ~78,
                                     climbed smoothly to a commanded 510°F target, held there,
@@ -296,7 +305,10 @@ covered in detail here since modern hardware doesn't use it.
 
 | Opcode | Frame | Meaning |
 |---|---|---|
-| `0xAA` | len 19 | Live dab-count telemetry — six 16-bit fields: flower/concentrate counts for today/week/month. Fires only during the initial connect-time sync burst, not continuously. |
+| `0xAA` | len 19 | Dab counters, eight 16-bit fields: `byte[2-3]`/`[4-5]` = lifetime flower/concentrate sessions, then today, week, month (flower first each time). Fires during the connect-time sync burst, not continuously. |
+| `0xFC` | len 18 | One session-log record: `[FC, len, idx(2), count(2), atomizer\|preset, year(2), month, day, hour, minute, durationSec, temp(2), unit, FC]` — atomizer hi nibble `A` = flower, `3`–`6` = concentrate; lo nibble = preset slot (0 = custom); unit `0x11`=°F / `0x22`=°C |
+| `0xFF` | len 6 | Session-log placeholder for an index the device no longer has: `[FF, len, idxHi, idxLo, FF, FF]` |
+| `0xDF` | len 4 | Current manual atomizer override (`byte[2]` uses the same codes as `0xDE`) |
 | `0xBB` | len 10 | Status/ack |
 | `0x99` | len 20 | Device/session state — see full breakdown above |
 | `0x55` | — | Preset-table sync, flower, °F |
@@ -307,7 +319,7 @@ covered in detail here since modern hardware doesn't use it.
 | `0xDD` | var | Session-log streaming — `byte[1]` nonzero = raw log chunk; zero = live per-sample telemetry record (see breakdown below) |
 | `0xCE` | len 7 | Live atomizer resistance — `byte[2-3]` = flower ohms, `byte[4-5]` = concentrate ohms |
 | `0x82` | len 8 | Screensaver settings/status — `byte[2]`/`byte[3]` = current Order/Time settings, `byte[5]`/`byte[6]` = slot 1/slot 2 "has a screensaver saved" flags (0/1), `byte[4]` unmapped |
-| `0xD2` | len 7 | Ack/readback for `0xD1` — confirmed to echo exactly what was just sent |
+| `0xD2` | len 7 | Ack/readback for `0xD1`, same field order (LED timeout, then device timeout) — confirmed to echo exactly what was just sent |
 | `0xC2` | len 8 | Response to `0xCD`/`0xC1` (calibration) — `byte[2]` = success flag, `byte[3-4]`/`byte[5-6]` = flower/concentrate ohms |
 | `0x73` | len 4 | Screensaver transfer session-ready ack (see transfer sequence above) |
 
@@ -329,14 +341,16 @@ session. Whether the device is running closed-loop PID at all is itself reported
 
 ## Confirmed temperature/duration limits, per device and mode
 
-| Device | Flower °F | Concentrate °F | Flower duration (s) | Concentrate duration (s) |
-|---|---|---|---|---|
-| Quantum | 300-460 | 365-635 | 120-240 | 20-120 |
-| Sport | 300-460 | 365-635 | 120-240 | 20-120 |
-| Aeris | 300-460 | 365-600 | 120-240 | 20-60 |
+| Device | Flower °F | Flower °C | Concentrate °F | Concentrate °C | Flower duration (s) | Concentrate duration (s) |
+|---|---|---|---|---|---|---|
+| Quantum | 275-500 | 145-260 | 365-635 | 185-335 | 120-240 | 20-120 |
+| Sport | 275-500 | 145-260 | 365-635 | 185-335 | 120-240 | 20-120 |
+| Aeris | 275-500 | 145-260 | 365-600 | 185-315 | 120-240 | 20-60 |
 
-Flower range is identical across all three; Aeris has a narrower concentrate range and a
-shorter max concentrate session than Quantum/Sport.
+These are the limits the official app's temperature steppers actually clamp to (main screen and
+preset editor alike). Its exported `*AtomizerMin/MaxFlowerTemp` constants (300/460 °F) are only
+the starting value when nothing is selected, and an earlier version of this table used them by
+mistake. The °C limits are separate literals in the app, not conversions of the °F ones.
 
 ## Recommended build order for a client
 
@@ -358,5 +372,6 @@ shorter max concentrate session than Quantum/Sport.
   response from a bare query alone — may require `0xC1` (the actual recalibration trigger) to
   have run first, or some other precondition.
 - `0x80`'s exact 3 parameters (screensaver slot-select metadata) remain unconfirmed.
-- Byte[5] of the `0x99` packet (heating-active flag) — confirmed boolean-ish, unclear if it
-  carries additional states beyond on/off.
+- Whether a bare `0xFA` session-log request (without the official app's follow-up `0xFD`) is
+  enough on its own for the device to stream `0xFC` records. That's how the official app's code
+  reads, but it hasn't been confirmed live.

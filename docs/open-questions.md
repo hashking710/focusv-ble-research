@@ -19,34 +19,42 @@ against these exact gaps rather than "more reverse engineering in general."
   [Firmware Architecture § Physical button input](firmware-architecture.md#physical-button-input).
   This was the exact case that motivated identifying the chip precisely in the first place —
   general lesson in [Methodology](methodology.md).
+- **Where the heating-element output is actually driven.** Resolved by disassembling the device's
+  actual current firmware build (`PROD-111224` — the originally-analyzed `PROD-071024` turned out
+  to be stale, no longer served to real devices) rather than more static digging on the old one.
+  All three devices (Carta 2, Aeris, Carta Sport) drive the heater directly on the TLSR8258 itself:
+  a dedicated output routine, called every tick, toggles one GPIO pin on or off depending on where
+  the current tick falls within a fixed 500-tick window, against an on-time value the PID step
+  computes and clamps each cycle — a software-timed slow PWM, not a hardware PWM-peripheral write.
+  That's exactly why the original exhaustive search (for a duty-register-style write) missed it —
+  the real mechanism is an ordinary GPIO toggle gated by a tick-window comparison, a different code
+  shape entirely. See
+  [Firmware Architecture § Where the heater output is driven](firmware-architecture.md#where-the-heater-output-is-driven).
+  **This retires the Nuvoton M031 heater-driver theory** this item previously led with — the M031's
+  actual role is open again, not resolved.
+- **The hardware-ramp patch's per-tick orchestrator and marker-dispatch addresses, for all three
+  devices.** Not originally an "open question" entry, but worth recording here the same way: an
+  earlier pass had the Carta 2 orchestrator address wrong (carried over from a different,
+  stale firmware build) and the marker-dispatch fix architecturally wrong (patched a single leaf
+  of a compare chain that the new marker values could never reach). Both caught and fixed by
+  re-deriving every address directly against the current build rather than trusting an earlier
+  "confirmed" label, including an exhaustive toolchain-only scan (generate the correct instruction
+  encoding at every possible position in the firmware, byte-compare against the real file) where
+  Ghidra's own auto-analysis couldn't resolve a call site via normal cross-references. Aeris and
+  Carta Sport got the same full treatment from scratch, each surfacing its own device-specific
+  surprise (Aeris's LED-push gate behaves differently from Sport's; Sport's ROM-divide helper
+  lives at a different address than both other devices'). Full details in
+  [Firmware Architecture § Custom firmware: device-native hardware ramp](firmware-architecture.md#custom-firmware-device-native-hardware-ramp)
+  and in the patch repo itself, [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware).
 
 ## Firmware
 
-- 🔬 **Where the heating-element output is actually driven.** An exhaustive search of the main
-  TLSR8258 firmware image (the entire cooperative scheduler, every GPIO write, the analog-register
-  bus, the confirmed-empty interrupt vector table) found no duty-varying or PWM-style output write
-  anywhere. **Leading theory**: a separate, real Nuvoton M031TD2AE (Arm Cortex-M0, 12× 16-bit PWM
-  channels) MCU confirmed to exist on the same board (see
-  [Firmware Architecture § Board hardware](firmware-architecture.md#board-hardware)) drives it —
-  not just because it has the peripherals for it, but because the confirmed PID loop computes a
-  real output value every tick with nowhere on-chip to go, and the M031 is physically positioned
-  near the board's high-current leads rather than near the display connector (the display itself
-  is separately fully accounted for on the TLSR8258 side, ruling that out as the M031's job).
-  **Every standard external comms peripheral on the TLSR8258 (I2C, SPI, MSPI, UART) has now been
-  checked against the complete real register map and ruled out as a data link to the M031** — SPI
-  is the display, MSPI is the on-chip flash controller, I2C has no real hits, and the UART (though
-  genuinely initialized and enabled at boot) never references its own data/status registers
-  anywhere in the image, meaning it never actually transmits or receives a byte. That leaves two
-  live possibilities static analysis alone can't distinguish: a plain bit-banged GPIO signal (a
-  software-timed pulse the M031 could read via its own timer-capture input, a different code shape
-  than the duty-register search above would catch) rather than a proper bus, or no data link at
-  all — the M031 running its own independent closed loop from its own ADC, with the TLSR8258's PID
-  output used only for BLE telemetry/on-screen display. **Not proven at the firmware level** — the
-  M031's own flash hasn't been dumped or analyzed at all; that's a new target requiring standard
-  Arm/SWD tooling, not the Telink TC32 setup used everywhere else in this repo (see
-  [Methodology § Hardware tooling](methodology.md#hardware-tooling) — this is now in progress). The
-  logic-analyzer work would still help confirm which physical chip actually switches the heater
-  current, independent of a firmware dump.
+- 🔬 **What the Nuvoton M031 actually does.** Open again now that the heater-driver theory above
+  is retired — the TLSR8258 side has nothing else obviously missing a destination, so there's no
+  current firmware-level lead pointing at a specific job for this chip. Needs its own flash dump
+  and analysis (standard Arm/SWD, not the Telink TC32 toolchain used elsewhere in this repo) or
+  logic-analyzer work on its pins to make any progress — not something static analysis of the
+  TLSR8258 image alone can resolve further.
 - **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
   flash address `0`) and an erase-target decision between address `0` and a staging area at
   `0x40000` are confirmed (see [Firmware Architecture](firmware-architecture.md)), but no evidence exists in this image

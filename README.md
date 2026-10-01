@@ -11,6 +11,11 @@ and personal-device-control purposes — building your own client, understanding
 hardware actually does, and diagnosing/recovering a device without depending on the official app.
 See [`LEGAL.md`](LEGAL.md) for why this kind of work is on solid legal footing.
 
+**Companion repo**: [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) is
+a complete, independently-verified firmware patch (for all three devices) built on top of what's
+documented here — a phone-independent, on-device temperature ramp. That repo is the patch itself;
+this one is how every address and protocol detail it relies on was found.
+
 <table>
 <tr>
 <td align="center" width="33%"><img src="assets/devices/carta-2.png" width="160" alt="Carta 2"><br><b>Carta 2</b><br><sub>"Quantum" internally</sub></td>
@@ -38,6 +43,7 @@ See [`LEGAL.md`](LEGAL.md) for why this kind of work is on solid legal footing.
 |---|---|
 | **[`tools/focusv-controller.html`](tools/focusv-controller.html)** | A from-scratch Web Bluetooth controller built against the documented protocol |
 | **[`tools/ble-tester.html`](tools/ble-tester.html)** | A lower-level BLE opcode tester/logger |
+| **[`tools/ota-flash.html`](tools/ota-flash.html)** | Pushes a firmware file to the device over Bluetooth using the real OTA wire protocol — works for a patched build or for pushing the original stock firmware back to fully revert |
 | **[`tools/ghidra-scripts/`](tools/ghidra-scripts/)** | The Ghidra scripts used during firmware analysis (`DumpTC32.java`, `FindXrefs.java`, `dump_tc32.py`) |
 
 No build step for the HTML tools — open directly in a browser that supports Web Bluetooth

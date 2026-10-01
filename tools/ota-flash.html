@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus V OTA Flash</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8eb;
+    --muted: #8b92a1; --accent: #5b9dff; --ok: #3ecf8e; --warn: #ffb454; --err: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    background: var(--bg); color: var(--text); font-size: 13px;
+  }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex;
+    align-items: center; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 12px; }
+  main { max-width: 640px; margin: 0 auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  fieldset { border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  legend { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; padding: 0 4px; }
+  button {
+    background: #23272f; color: var(--text); border: 1px solid var(--border); border-radius: 5px;
+    padding: 8px 14px; font-family: inherit; font-size: 13px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #2c313c; border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #0b0f16; border-color: var(--accent); font-weight: 600; }
+  button.danger { border-color: var(--err); color: var(--err); background: transparent; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err); flex-shrink: 0; }
+  .dot.on { background: var(--ok); }
+  .warn-box {
+    background: #2a1f10; border: 1px solid var(--warn); color: var(--warn); border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; line-height: 1.6;
+  }
+  .warn-box b { color: #ffd38a; }
+  .kv { font-size: 12px; color: var(--muted); line-height: 1.7; }
+  .kv b { color: var(--text); font-weight: 500; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  input[type=file] { font-family: inherit; font-size: 12px; color: var(--muted); }
+  .progress-track {
+    height: 8px; border-radius: 4px; background: #0b0d12; border: 1px solid var(--border);
+    overflow: hidden; margin: 8px 0;
+  }
+  .progress-fill { height: 100%; background: var(--accent); width: 0%; transition: width .1s linear; }
+  .err { color: var(--err); }
+  .ok { color: var(--ok); }
+  .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  code { background: #0b0d12; border-radius: 3px; padding: 1px 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Focus V OTA Flash</h1>
+  <span class="sub">Push a firmware file directly to a Carta 2 / Aeris / Carta Sport over Bluetooth</span>
+  <span class="status" style="margin-left:auto">
+    <span class="dot" id="dot"></span>
+    <span id="statusText">Not connected</span>
+  </span>
+</header>
+
+<main>
+  <div class="warn-box">
+    <b>Read before using.</b> This writes directly to the device's firmware storage using the same
+    real update mechanism the official app uses (see
+    <a href="../docs/ble-protocol.md#real-firmware-ota--a-completely-separate-protocol" target="_blank">docs/ble-protocol.md</a>).
+    Only use a file you're completely sure is a real, correctly-built firmware image for this
+    exact device model — a wrong or corrupted file can leave it unresponsive. Keep the device
+    powered and in range and don't close this tab until the transfer finishes. This is a generic
+    flashing tool: it works the same way whether the file is a patched build or the original stock
+    firmware — keeping your original download around means you can always push it back here to
+    fully revert.
+  </div>
+
+  <fieldset>
+    <legend>Connect</legend>
+    <div class="row">
+      <button class="primary" id="btnConnect">Connect device</button>
+      <button class="danger" id="btnDisconnect" disabled>Disconnect</button>
+    </div>
+    <div class="kv" id="deviceInfo" style="margin-top:8px"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Firmware file</legend>
+    <input type="file" id="fileInput" accept=".bin">
+    <div class="kv" id="fileInfo" style="margin-top:8px"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Transfer</legend>
+    <div class="row">
+      <button class="primary" id="btnFlash" disabled>Push to device</button>
+      <button class="danger" id="btnCancel" disabled>Cancel</button>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="kv" id="progressText">idle</div>
+  </fieldset>
+</main>
+
+<script>
+const SERVICE_UUID = '1011123e-8535-b5a0-7140-a304d2495cb7';
+const WRITE_CHAR_UUID = '1011123e-8535-b5a0-7140-a304d2495cb9';
+const OTA_SERVICE_UUID = '00010203-0405-0607-0809-0a0b0c0d1912';
+const OTA_WRITE_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d2b12';
+
+const PRE_OTA_WAIT_MS = 350;
+const BLOCK_DELAY_MS = 8;
+const BLOCK_DATA_SIZE = 16;
+
+const $ = id => document.getElementById(id);
+const dot = $('dot'), statusText = $('statusText'), deviceInfo = $('deviceInfo');
+const btnConnect = $('btnConnect'), btnDisconnect = $('btnDisconnect');
+const fileInput = $('fileInput'), fileInfo = $('fileInfo');
+const btnFlash = $('btnFlash'), btnCancel = $('btnCancel');
+const progressFill = $('progressFill'), progressText = $('progressText');
+
+let device = null, writeChar = null, otaChar = null;
+let firmwareBytes = null;
+let cancelled = false;
+
+if (!navigator.bluetooth) {
+  statusText.textContent = 'navigator.bluetooth unavailable — use desktop Chrome/Edge or Android Chrome';
+  btnConnect.disabled = true;
+}
+
+function setConnected(on) {
+  dot.classList.toggle('on', on);
+  statusText.textContent = on ? `Connected — ${device.name || device.id}` : 'Not connected';
+  btnConnect.disabled = on;
+  btnDisconnect.disabled = !on;
+  updateFlashButton();
+}
+
+function updateFlashButton() {
+  btnFlash.disabled = !(device && writeChar && otaChar && firmwareBytes);
+}
+
+async function connect() {
+  try {
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [SERVICE_UUID, OTA_SERVICE_UUID, 'device_information', 'battery_service', 'generic_access'],
+    });
+    device.addEventListener('gattserverdisconnected', () => { setConnected(false); writeChar = null; otaChar = null; });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    writeChar = await service.getCharacteristic(WRITE_CHAR_UUID);
+    try {
+      const otaService = await server.getPrimaryService(OTA_SERVICE_UUID);
+      otaChar = await otaService.getCharacteristic(OTA_WRITE_CHAR_UUID);
+    } catch (e) {
+      otaChar = null;
+    }
+    deviceInfo.innerHTML = `<b>Name:</b> ${device.name || '(unnamed)'}<br><b>ID:</b> ${device.id}<br>` +
+      `<b>OTA channel:</b> ${otaChar ? '<span class="ok">available</span>' : '<span class="err">not found on this device</span>'}`;
+    setConnected(true);
+  } catch (e) {
+    statusText.textContent = 'Connect failed: ' + e.message;
+  }
+}
+
+function disconnect() {
+  if (device && device.gatt.connected) device.gatt.disconnect();
+  setConnected(false);
+}
+
+function to16BE(v) { return [(v >> 8) & 0xff, v & 0xff]; }
+function to16LE(v) { return [v & 0xff, (v >> 8) & 0xff]; }
+
+// Standard CRC-16/ARC: reflected poly 0xA001, seeded 0xFFFF, no final XOR.
+function crc16(bytes) {
+  let crc = 0xffff;
+  for (const b of bytes) {
+    crc ^= b;
+    for (let i = 0; i < 8; i++) {
+      crc = (crc & 1) ? (crc >>> 1) ^ 0xa001 : crc >>> 1;
+    }
+  }
+  return crc & 0xffff;
+}
+
+function validateHeader(bytes) {
+  if (bytes.length < 12) return { valid: false, reason: 'file is too small to be a real firmware image' };
+  const magic = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11]);
+  if (magic !== 'KNLT') {
+    return { valid: false, reason: `missing "KNLT" header at byte 8 (found "${magic.replace(/[^\x20-\x7e]/g, '?')}")` };
+  }
+  return { valid: true };
+}
+
+async function writeNormal(bytes) {
+  await writeChar.writeValue(new Uint8Array(bytes).buffer);
+}
+async function writeOta(bytes) {
+  await otaChar.writeValue(new Uint8Array(bytes).buffer);
+}
+
+function buildPreOtaDateTimeCommand() {
+  const now = new Date();
+  const year = to16BE(now.getUTCFullYear());
+  return [0x77, 0x0c, year[0], year[1], now.getUTCMonth() + 1, now.getUTCDate(),
+          now.getUTCHours(), now.getUTCMinutes(), 0, 0, 0, 0x77];
+}
+
+function splitBlocks(bytes) {
+  const blocks = [];
+  for (let offset = 0; offset < bytes.length; offset += BLOCK_DATA_SIZE) {
+    const chunk = bytes.slice(offset, offset + BLOCK_DATA_SIZE);
+    if (chunk.length < BLOCK_DATA_SIZE) {
+      const padded = new Uint8Array(BLOCK_DATA_SIZE).fill(0xff);
+      padded.set(chunk);
+      blocks.push(padded);
+    } else {
+      blocks.push(chunk);
+    }
+  }
+  return blocks;
+}
+
+function buildBlock(index, data) {
+  const body = new Uint8Array(18);
+  body.set(to16LE(index), 0);
+  body.set(data, 2);
+  const block = new Uint8Array(20);
+  block.set(body, 0);
+  block.set(to16LE(crc16(body)), 18);
+  return block;
+}
+
+async function flash() {
+  if (!firmwareBytes || !writeChar || !otaChar) return;
+  cancelled = false;
+  btnFlash.disabled = true;
+  btnCancel.disabled = false;
+  progressFill.style.width = '0%';
+
+  try {
+    progressText.textContent = 'preparing — sending date/time…';
+    await writeNormal(buildPreOtaDateTimeCommand());
+    await new Promise(r => setTimeout(r, PRE_OTA_WAIT_MS));
+    if (cancelled) { progressText.innerHTML = '<span class="muted">cancelled.</span>'; return; }
+
+    progressText.textContent = 'starting transfer session…';
+    await writeOta([0x00, 0xff]);
+    await writeOta([0x01, 0xff]);
+
+    const blocks = splitBlocks(firmwareBytes);
+    for (let i = 0; i < blocks.length; i++) {
+      if (cancelled) { progressText.innerHTML = '<span class="muted">cancelled mid-transfer — the device\'s own OTA session may be half-started; reconnecting and either finishing a transfer or running a factory reset is the safest next step if it seems off afterward.</span>'; return; }
+      await writeOta(buildBlock(i, blocks[i]));
+      const pct = Math.round(((i + 1) / blocks.length) * 100);
+      progressFill.style.width = pct + '%';
+      progressText.textContent = `transferring… ${pct}% (block ${i + 1}/${blocks.length})`;
+      await new Promise(r => setTimeout(r, BLOCK_DELAY_MS));
+    }
+
+    progressText.textContent = 'finishing…';
+    const lastIndex = blocks.length - 1;
+    const complement = (~lastIndex) & 0xffff;
+    await writeOta([0x02, 0xff, ...to16LE(lastIndex), ...to16LE(complement)]);
+
+    progressFill.style.width = '100%';
+    progressText.innerHTML = '<span class="ok">transfer complete.</span> the device will finish applying it and may restart or briefly disconnect on its own — that\'s expected.';
+  } catch (e) {
+    progressText.innerHTML = `<span class="err">transfer failed: ${e.message}</span> — reconnecting and trying again is usually safe, since the device hadn't finished validating and swapping to the new image.`;
+  } finally {
+    btnCancel.disabled = true;
+    updateFlashButton();
+  }
+}
+
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const check = validateHeader(bytes);
+  if (!check.valid) {
+    firmwareBytes = null;
+    fileInfo.innerHTML = `<span class="err">${check.reason} — this doesn't look like a valid firmware image.</span>`;
+  } else {
+    firmwareBytes = bytes;
+    fileInfo.innerHTML = `${file.name} — ${(bytes.length / 1024).toFixed(0)} KB — <span class="ok">header looks like a real firmware image.</span>`;
+  }
+  updateFlashButton();
+});
+
+btnConnect.addEventListener('click', connect);
+btnDisconnect.addEventListener('click', disconnect);
+btnFlash.addEventListener('click', flash);
+btnCancel.addEventListener('click', () => { cancelled = true; });
+</script>
+</body>
+</html>

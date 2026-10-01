@@ -273,6 +273,7 @@
     <div class="tabs">
       <button class="active" data-tab="panelQuick" type="button">Quick set</button>
       <button data-tab="panelRamp" type="button">Ramp</button>
+      <button data-tab="panelHwRamp" type="button">HW Ramp (beta)</button>
       <button data-tab="panelPresets" type="button">Presets</button>
       <button data-tab="panelLed" type="button">LED</button>
       <button data-tab="panelScreensaver" type="button">Screensaver</button>
@@ -387,6 +388,54 @@
         <svg id="curveSvg" viewBox="0 0 600 220" preserveAspectRatio="none"></svg>
         <button type="button" class="ghost" id="btnExportRamp" style="margin-top:10px">⬇ Export ramp CSV</button>
       </div>
+    </div>
+
+    <div id="panelHwRamp" class="panel-body hidden">
+      <div class="hint" style="margin-top:0">⚠ Experimental — requires the custom firmware patch documented
+        in this repo's <code>docs/firmware-architecture.md</code>, not yet tested on real hardware. Sending
+        these commands to stock firmware is harmless (the new marker bytes are simply unrecognized), but
+        nothing here will actually ramp until that patch is flashed. Unlike the Ramp tab above — which
+        drives the device by sending timed writes from this page — this ramp runs
+        <strong>on the device itself</strong> once started: this page can be closed and it keeps going.</div>
+
+      <div class="field-row">
+        <div>
+          <div class="field-label">Mode</div>
+          <div class="segmented" id="hwRampModeSeg" data-value="flower">
+            <button type="button" data-val="flower" class="active">🌸 Flower</button>
+            <button type="button" data-val="concentrate">🟣 Concentrate</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-title" style="margin-top:4px">Waypoints</div>
+      <div id="hwWaypointList"></div>
+      <button type="button" id="btnHwAddWaypoint" style="margin-bottom:14px">+ Add waypoint</button>
+      <div class="hint" style="margin-top:0">Set the last waypoint's hold to 0 — that's what tells the
+        device to stop advancing (the firmware treats a 0-second hold the same as a never-saved slot: end
+        of ramp here). Values are <strong>not</strong> clamped to the normal preset range the way Quick Set
+        is — a waypoint here is data being stored on the device, not a temperature being applied
+        immediately. The device's own session timer has a documented ceiling (240s flower / 120s
+        concentrate normally); whether a longer ramp keeps running past that hasn't been confirmed on real
+        hardware yet, so keep ramps short until it has.</div>
+
+      <div class="btn-row">
+        <button type="button" class="ok big" id="btnHwRampSave" disabled style="flex:1">💾 Save to device</button>
+      </div>
+      <div class="hint" id="hwRampSaveStatus" style="margin-top:8px; margin-bottom:0"></div>
+
+      <div class="btn-row" style="margin-top:14px">
+        <button type="button" class="ok big" id="btnHwRampStart" disabled style="flex:1">▶ Start hardware ramp</button>
+        <button type="button" class="danger big" id="btnHwRampStop" disabled style="flex:1">■ Stop</button>
+      </div>
+      <div class="hint">"Save to device" writes all 5 flash slots for the selected mode (unused trailing
+        slots as 0°/0s, which the firmware treats the same as a never-saved slot — inert either way).
+        "Start" arms the ramp by sending a normal start command carrying a fixed sentinel temperature
+        (150°F) that the patched firmware recognizes in place of a real target — from there it runs the
+        saved waypoints on its own. "Stop" is the same Cancel command used everywhere else in this app;
+        the firmware's own session-end handling resets the ramp's progress. The device has no read-back
+        opcode for these waypoints — Save just remembers, locally in this browser, what was last sent; it
+        can't confirm what's actually on the device.</div>
     </div>
 
     <div id="panelPresets" class="panel-body hidden">
@@ -842,6 +891,7 @@ const dot = $('dot'), statusText = $('statusText'), deviceInfo = $('deviceInfo')
 const btnConnect = $('btnConnect'), btnDisconnect = $('btnDisconnect'), btnReconnect = $('btnReconnect');
 const btnStop = $('btnStop'), btnPowerOff = $('btnPowerOff');
 const btnManSet = $('btnManSet'), btnRampStart = $('btnRampStart'), btnRampStop = $('btnRampStop');
+const btnHwRampSave = $('btnHwRampSave'), btnHwRampStart = $('btnHwRampStart'), btnHwRampStop = $('btnHwRampStop');
 const logEl = $('log');
 
 if (!navigator.bluetooth) {
@@ -867,6 +917,7 @@ function setSegmented(id, val) {
 const segValue = id => $(id).dataset.value;
 initSegmented('manModeSeg');
 initSegmented('rampModeSeg');
+initSegmented('hwRampModeSeg');
 initSegmented('scaleSeg');
 initSegmented('lpmSeg');
 initSegmented('ledRankSeg');
@@ -1024,6 +1075,8 @@ function saveSettingsToStorage() {
       rampNotify: $('rampNotify').checked,
       rampPresets,
       deviceModel: $('deviceModelSel').value,
+      hwRampMode: segValue('hwRampModeSeg'),
+      hwRampWaypointsByMode,
     }));
   } catch (e) { /* storage unavailable/full — non-critical, just skip persisting */ }
 }
@@ -1043,6 +1096,10 @@ function loadSettingsFromStorage() {
     if (s.rampNotify) $('rampNotify').checked = true;
     if (s.rampPresets) rampPresets = s.rampPresets;
     if (s.deviceModel) $('deviceModelSel').value = s.deviceModel;
+    if (s.hwRampMode) setSegmented('hwRampModeSeg', s.hwRampMode);
+    if (s.hwRampWaypointsByMode?.flower?.length && s.hwRampWaypointsByMode?.concentrate?.length) {
+      hwRampWaypointsByMode = s.hwRampWaypointsByMode;
+    }
   } catch (e) { /* corrupted/unavailable storage — ignore, defaults stand */ }
   applyDeviceModelScope();
   applyScaleUI();
@@ -1057,6 +1114,8 @@ function setConnected(on) {
   btnPowerOff.disabled = !on;
   btnManSet.disabled = !on;
   btnRampStart.disabled = !on;
+  btnHwRampSave.disabled = !on;
+  btnHwRampStart.disabled = !on;
   $('btnRefreshPresets').disabled = !on;
   $('vibrationSlider').disabled = !on;
   $('btnApplyTimeout').disabled = !on;
@@ -1075,6 +1134,7 @@ function setConnected(on) {
     btnReconnect.style.display = 'none';
   } else {
     stopRampTimer(); // no connection left to send a device stop write to
+    setHwRampRunning(false); // UI-only: no way to know the device's real ramp state once disconnected
     settingsSynced = false;
     live.flowerPresetsF = live.concPresetsF = live.flowerPresetsC = live.concPresetsC = null;
     live.ledPresetRank = null;
@@ -1581,6 +1641,75 @@ async function stopSession() {
     fD[0], fD[1], cD[0], cD[1], live.flowerRank, live.concRank, 0xAF, 0, 0xCC]);
   await writeCmd(cmd, 'stop session (Cancel)');
   stopRampTimer();
+}
+
+// ---- Hardware ramp (custom firmware, beta) ---------------------------------
+//
+// Stock firmware has no native ramp concept -- the Ramp tab above drives it entirely by
+// sending timed 0xCC writes from this page. The custom firmware patch documented in
+// docs/firmware-architecture.md adds a *device-native* ramp instead: it extends the same
+// 0xCC marker byte with five new values (0xB1-0xB5) that save a waypoint to a dedicated
+// on-device flash sector rather than starting a session, plus an autonomous sequencer that
+// walks through those waypoints once armed -- no browser needed once it's started. Both are
+// no-ops on stock/unpatched firmware, so these are safe to send to any device; they just
+// won't do anything until the firmware patch is actually flashed.
+const RAMP_WAYPOINT_SAVE_MARKERS = { 1: 0xB1, 2: 0xB2, 3: 0xB3, 4: 0xB4, 5: 0xB5 };
+
+// Deliberately far below any real preset floor (300°F+ on every documented model) so it can
+// never be hit by an ordinary temperature entry. The firmware's own °F→°C conversion has to
+// run for the sentinel match to work, which is why buildRampStartCommand() below always
+// forces the scale byte to Fahrenheit regardless of the device's configured display unit --
+// sending this pre-converted to Celsius would compare against the wrong number entirely.
+const HARDWARE_RAMP_SENTINEL_F = 150;
+
+// Saves one waypoint (temp + hold duration) to the custom firmware's dedicated 5-slot flash
+// storage. Deliberately does NOT clamp to the normal preset bounds the way buildTempCommand
+// does -- a waypoint is data being stored, not a temperature about to be applied, and
+// silently clamping it here would corrupt what actually gets saved without any visible error.
+function buildRampWaypointSaveCommand(slot, mode, targetTemp, targetDuration) {
+  const scale = live.scale;
+  const marker = RAMP_WAYPOINT_SAVE_MARKERS[slot];
+  const T = to16(Math.round(targetTemp));
+  const D = to16(Math.max(0, Math.round(targetDuration)));
+  let bytes;
+  if (mode === 'flower') {
+    const otherT = to16(live.concSetTemp);
+    const otherD = to16(live.concSetDuration);
+    bytes = [0xCC, 0x10, T[0], T[1], otherT[0], otherT[1], scale, D[0], D[1],
+      otherD[0], otherD[1], 0, live.concRank, marker, 0, 0xCC];
+  } else {
+    const otherT = to16(live.flowerSetTemp);
+    const otherD = to16(live.flowerSetDuration);
+    bytes = [0xCC, 0x10, otherT[0], otherT[1], T[0], T[1], scale, otherD[0], otherD[1],
+      D[0], D[1], live.flowerRank, 0, marker, 0, 0xCC];
+  }
+  return new Uint8Array(bytes);
+}
+
+// Arms the on-device ramp: a normal "start" command (the same 0xA5 warmup-trigger marker
+// buildTempCommand uses) carrying the sentinel temperature instead of a real one. From here
+// the patched firmware runs the saved waypoints on its own -- no further writes needed, and
+// this page can be closed without stopping the ramp. NOTE: this still rides on the device's
+// own normal session-duration field, which has a documented ceiling (240s flower / 120s
+// concentrate) never tested beyond -- a ramp whose total waypoint time exceeds that may get
+// cut short by the device's own built-in session timeout until that's confirmed otherwise.
+function buildRampStartCommand(mode) {
+  const WARMUP_MARKER = 0xA5;
+  const T = to16(HARDWARE_RAMP_SENTINEL_F);
+  const D = to16(0);
+  let bytes;
+  if (mode === 'flower') {
+    const otherT = to16(live.concSetTemp);
+    const otherD = to16(live.concSetDuration);
+    bytes = [0xCC, 0x10, T[0], T[1], otherT[0], otherT[1], 0x11, D[0], D[1],
+      otherD[0], otherD[1], 0, live.concRank, WARMUP_MARKER, 0, 0xCC];
+  } else {
+    const otherT = to16(live.flowerSetTemp);
+    const otherD = to16(live.flowerSetDuration);
+    bytes = [0xCC, 0x10, otherT[0], otherT[1], T[0], T[1], 0x11, otherD[0], otherD[1],
+      D[0], D[1], live.flowerRank, 0, WARMUP_MARKER, 0, 0xCC];
+  }
+  return new Uint8Array(bytes);
 }
 
 async function powerOff() {
@@ -2379,6 +2508,121 @@ $('btnAddWaypoint').addEventListener('click', () => {
   saveSettingsToStorage();
 });
 
+// ---- HW Ramp waypoints (device-native, custom firmware) ----
+// Distinct model from the client-side ramp's `waypoints` above: temp + a hold DURATION
+// (seconds), not an absolute time offset, matching what the firmware's own 5-slot storage
+// holds. Kept separately per mode since flower/concentrate curves are naturally different.
+const HW_RAMP_MAX_SLOTS = 5;
+let hwRampWaypointsByMode = {
+  flower: [{ tempF: 350, durationSeconds: 90 }, { tempF: 400, durationSeconds: 90 }, { tempF: 450, durationSeconds: 0 }],
+  concentrate: [{ tempF: 500, durationSeconds: 60 }, { tempF: 560, durationSeconds: 0 }],
+};
+let hwRampRunning = false;
+function currentHwWaypoints() { return hwRampWaypointsByMode[segValue('hwRampModeSeg')]; }
+
+function renderHwWaypoints() {
+  const wps = currentHwWaypoints();
+  const container = $('hwWaypointList');
+  container.innerHTML = wps.map((wp, i) => `
+    <div class="field-row waypoint-row" data-index="${i}">
+      <div>
+        <div class="field-label">Temp #${i + 1}</div>
+        <input type="number" class="hw-wp-temp" value="${wp.tempF}" aria-label="Waypoint temperature" ${hwRampRunning ? 'disabled' : ''}>
+      </div>
+      <div style="max-width:100px">
+        <div class="field-label">Hold (s)</div>
+        <input type="number" class="hw-wp-duration" min="0" value="${wp.durationSeconds}" aria-label="Waypoint hold duration in seconds" ${hwRampRunning ? 'disabled' : ''}>
+      </div>
+      <div class="waypoint-remove-cell">
+        <button type="button" class="hw-wp-remove" ${(hwRampRunning || wps.length <= 1) ? 'disabled' : ''} aria-label="Remove waypoint">✕</button>
+      </div>
+    </div>
+  `).join('');
+  $('btnHwAddWaypoint').disabled = hwRampRunning || wps.length >= HW_RAMP_MAX_SLOTS;
+  $('btnHwAddWaypoint').textContent = `+ Add waypoint (${wps.length}/${HW_RAMP_MAX_SLOTS} — the device has exactly ${HW_RAMP_MAX_SLOTS} slots)`;
+}
+$('hwWaypointList').addEventListener('change', e => {
+  const row = e.target.closest('.waypoint-row');
+  if (!row) return;
+  const i = parseInt(row.dataset.index, 10);
+  const wps = currentHwWaypoints();
+  if (e.target.classList.contains('hw-wp-temp')) wps[i].tempF = parseFloat(e.target.value) || 0;
+  if (e.target.classList.contains('hw-wp-duration')) wps[i].durationSeconds = Math.max(0, Math.round(parseFloat(e.target.value) || 0));
+  saveSettingsToStorage();
+});
+$('hwWaypointList').addEventListener('click', e => {
+  const btn = e.target.closest('.hw-wp-remove');
+  if (!btn) return;
+  const row = e.target.closest('.waypoint-row');
+  const i = parseInt(row.dataset.index, 10);
+  const wps = currentHwWaypoints();
+  if (wps.length <= 1) return;
+  wps.splice(i, 1);
+  wps[wps.length - 1].durationSeconds = 0; // whatever's now last becomes the final waypoint
+  renderHwWaypoints();
+  saveSettingsToStorage();
+});
+$('btnHwAddWaypoint').addEventListener('click', () => {
+  const wps = currentHwWaypoints();
+  if (wps.length >= HW_RAMP_MAX_SLOTS) return;
+  const last = wps[wps.length - 1];
+  last.durationSeconds = last.durationSeconds || 90; // no longer the final waypoint now that something follows
+  wps.push({ tempF: last.tempF, durationSeconds: 0 });
+  renderHwWaypoints();
+  saveSettingsToStorage();
+});
+$('hwRampModeSeg').addEventListener('click', () => { renderHwWaypoints(); saveSettingsToStorage(); });
+
+async function saveHwRampToDevice() {
+  const mode = segValue('hwRampModeSeg');
+  const wps = currentHwWaypoints();
+  const statusEl = $('hwRampSaveStatus');
+  btnHwRampSave.disabled = true;
+  statusEl.style.color = '';
+  statusEl.textContent = 'saving…';
+  try {
+    for (let slot = 1; slot <= HW_RAMP_MAX_SLOTS; slot++) {
+      const wp = wps[slot - 1];
+      // Slots past what's configured are saved as 0/0 -- the firmware treats a 0-second
+      // hold (same as a never-saved, erased slot) as "end of ramp here", so an unused
+      // trailing slot is inert either way.
+      await writeCmd(
+        buildRampWaypointSaveCommand(slot, mode, wp ? wp.tempF : 0, wp ? wp.durationSeconds : 0),
+        `save hw ramp waypoint ${slot} (${mode})${wp ? ` → ${wp.tempF}° for ${wp.durationSeconds}s` : ' → clear'}`,
+      );
+    }
+    statusEl.textContent = `sent to device at ${new Date().toLocaleTimeString()} — remember, the device can't confirm what it actually saved.`;
+  } catch (e) {
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = `save failed: ${e.message || e} — try reconnecting and saving again.`;
+  } finally {
+    btnHwRampSave.disabled = !(device && device.gatt && device.gatt.connected);
+  }
+}
+
+// UI-only toggle — the firmware has no notification for ramp progress, so this just tracks
+// "we sent Start and haven't sent Stop" locally, same caveat as the saved-waypoint cache.
+function setHwRampRunning(on) {
+  hwRampRunning = on;
+  const connected = !!(device && device.gatt && device.gatt.connected);
+  btnHwRampStart.disabled = on || !connected;
+  btnHwRampStop.disabled = !on || !connected;
+  btnHwRampSave.disabled = on || !connected;
+  renderHwWaypoints();
+}
+
+async function startHwRamp() {
+  await writeCmd(buildRampStartCommand(segValue('hwRampModeSeg')), 'start hardware ramp (sentinel)');
+  setHwRampRunning(true);
+}
+
+async function stopHwRamp() {
+  // The firmware's ramp sequencer resets its own progress the moment the underlying session
+  // ends, so a normal stop is all this needs to send -- nothing hardware-ramp-specific.
+  await stopSession();
+  setHwRampRunning(false);
+}
+
 // ---- Ramp ----
 
 function drawCurve(wps, holdSeconds, elapsedSeconds) {
@@ -2635,6 +2879,9 @@ btnManSet.addEventListener('click', () => {
 });
 btnRampStart.addEventListener('click', startRamp);
 btnRampStop.addEventListener('click', () => stopRamp(false));
+btnHwRampSave.addEventListener('click', saveHwRampToDevice);
+btnHwRampStart.addEventListener('click', startHwRamp);
+btnHwRampStop.addEventListener('click', stopHwRamp);
 $('btnExportLog').addEventListener('click', (e) => {
   e.preventDefault();
   const blob = new Blob([logEl.innerText], { type: 'text/plain' });
@@ -2659,6 +2906,7 @@ $('rampClosedLoop').addEventListener('change', saveSettingsToStorage);
 loadSettingsFromStorage();
 renderWaypoints();
 renderRampPresets();
+renderHwWaypoints();
 tryOfferReconnect();
 </script>
 </body>
