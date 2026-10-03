@@ -90,6 +90,8 @@ for the reasoning and exact parts):
 - **SWire tooling for the TLSR8258 itself** — a genuinely separate, non-obvious requirement from
   the SWD probe above; see the Methodology doc for why.
 
+<p align="center"><img src="assets/chips/tlsr8258-pinout.png" width="520" alt="TLSR8258F512ET48 QFN48 pin assignment"><br><sub>TLSR8258F512ET48 pin assignment (Telink datasheet) — the exact variant on this board. SWire is pin 9 (SWS), with DP(SWS) on pin 8.</sub></p>
+
 Still planned, not yet sourced:
 
 - **A passive BLE sniffer** (e.g. an nRF52840 dongle running an open-source BLE sniffer
