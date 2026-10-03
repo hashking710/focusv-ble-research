@@ -126,16 +126,18 @@ This is the one that matters most before any real firmware experiment on the mai
    to GND, and RTS wired for power/reset control per the tool's exact diagram (varies slightly
    depending on whether your target board exposes a separate reset pin).
 3. **Locate the TLSR8258's SWire pad** on the board — same visual-inspection/continuity-testing
-   approach as the Nuvoton's SWD pads above. Telink's own reference designs typically label this
-   pin `SWM`/`SWS` on schematics; on the physical board it may just be an unlabeled test point
-   near the chip.
+   approach as the Nuvoton's SWD pads above. The datasheet labels SWire-family functions on two
+   pins: `SWS` on pins 8/9 (the target-side pins) and `SWM` on pin 46 (`SWM/I2S_SDO/PWM2_N/PD<4>`,
+   top edge, far side of the package). The SWM-vs-SWS role split is our reading and hasn't been
+   confirmed against Telink's documentation, so the target side is treated as pins 8/9 for now.
+   On the physical board the pad may just be an unlabeled test point near the chip.
 
    **Likely physical location, from the datasheet pinout** (see
    [Firmware Architecture § Board hardware](firmware-architecture.md#board-hardware) for the full
    pin diagram — the real part marking `TLSR8258 F1KET48` matches Telink's `TLSR8258F512ET48`
    QFN48 variant exactly, so this diagram is for the exact chip on this board, not a lookalike):
    the datasheet lists **pin 9 (`SWS`/`UART_RTS`/`PA<7>`)** as the primary SWire pin, with
-   **pin 8 (`DP(SWS)`/`PA<6>`)** as an alternate — Telink parts can be configured to use either.
+   **pin 8 (`DP(SWS)`/`PA<6>`)** is the other pin the datasheet labels with SWS.
 
    Correlating this against the real board photo (pin 1 is the lead next to the small dot on the
    chip package, standard QFN orientation marking):
