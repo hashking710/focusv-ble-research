@@ -137,9 +137,12 @@ This is the one that matters most before any real firmware experiment on the mai
    the datasheet lists **pin 9 (`SWS`/`UART_RTS`/`PA<7>`)** as the primary SWire pin, with
    **pin 8 (`DP(SWS)`/`PA<6>`)** as an alternate — Telink parts can be configured to use either.
 
-   Correlating this against the real board photo (pin 1 is marked by the small dot visible on the
-   chip package, standard QFN convention — see
-   [`tlsr8258-sws-candidate.png`](../assets/chips/tlsr8258-sws-candidate.png)): counting pins
+   Correlating this against the real board photo (pin 1 is the lead next to the small dot on the
+   chip package, standard QFN orientation marking):
+
+   <p align="center"><img src="../assets/chips/tlsr8258-sws-candidate.png" width="520" alt="TLSR8258 board photo with candidate SWS pins marked"><br><sub>Candidate SWS pins on the real board: pin 1 lead, the package orientation dot, and pins 8 (DP(SWS)) and 9 (SWS). Photo-count estimate, not a confirmed pinout.</sub></p>
+
+   Counting pins
    along the one edge clearly resolved in the photo places pins 8 and 9 two pins before the
    package corner nearest the silkscreened `R43`/`C27`/`R61` footprints, which is consistent with
    a series-resistor-protected debug line (a common pattern in reference designs, to protect the
