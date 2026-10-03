@@ -338,7 +338,8 @@ the device rejecting or misinterpreting the transfer — see
 fixed base address, with no notion of "this is a patch" vs "this is a stock image." Reverting a
 device (pushing the original stock file back over a currently-patched one) goes through this exact
 same code, the exact same checks, with no size comparison against what's currently installed
-anywhere in the path (confirmed on Aeris — see [Firmware Architecture](firmware-architecture.md)).
+anywhere in the path (confirmed independently on all three devices — see
+[Firmware Architecture](firmware-architecture.md)).
 [`tools/ota-flash.html`](../tools/ota-flash.html) in this repo is a standalone implementation of
 this sequence for exactly that purpose: push either direction, from any machine, without the main
 app. Keep whatever stock file you started from — it's the revert path.
