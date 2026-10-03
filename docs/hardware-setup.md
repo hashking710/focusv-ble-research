@@ -137,20 +137,23 @@ This is the one that matters most before any real firmware experiment on the mai
    the datasheet lists **pin 9 (`SWS`/`UART_RTS`/`PA<7>`)** as the primary SWire pin, with
    **pin 8 (`DP(SWS)`/`PA<6>`)** as an alternate — Telink parts can be configured to use either.
 
-   Correlating this against the real board photo (pin 1 is marked by the small dot visible on the
-   chip package, standard QFN convention — see
-   [`tlsr8258-sws-candidate.png`](../assets/chips/tlsr8258-sws-candidate.png)): counting pins
-   along the one edge clearly resolved in the photo places pins 8 and 9 two pins before the
-   package corner nearest the silkscreened `R43`/`C27`/`R61` footprints, which is consistent with
-   a series-resistor-protected debug line (a common pattern in reference designs, to protect the
+   Correlating this against the real board photo — see
+   [`tlsr8258-sws-candidate.png`](../assets/chips/tlsr8258-sws-candidate.png): the chip package
+   has its own small molded dot near pin 1 (standard QFN orientation marking, visible top-left of
+   the package), and there's a *separate* dot silkscreened onto the board itself, one pin-pitch
+   before the actual first lead, pointing at it. Counting pins from that first lead along the one
+   edge clearly resolved in the photo places pins 8 and 9 two pins before the package corner
+   nearest the silkscreened `R43`/`C27`/`R61` footprints, which is consistent with a
+   series-resistor-protected debug line (a common pattern in reference designs, to protect the
    chip if the debug line is probed while the board is powered). **This is a photo-correlated
-   estimate, not a confirmed pinout** — the photo's resolution isn't sharp enough to count
-   individual 0.5mm-pitch leads with certainty, and this project's own standard throughout has been to verify against the real
-   consumer, not a visual guess. **Confirm with a continuity tester (multimeter beep mode)
-   against a known-ground pin before wiring anything to pin 8 or 9** — this is the same caution
-   the Nuvoton SWD section above already asks for, and it matters more here, since miswiring a
-   debug line into the wrong GPIO on a powered board is the actual risk this whole guide exists to
-   avoid.
+   estimate, not a confirmed pinout** — at this resolution, independent pixel-level attempts to
+   count the individual 0.5mm-pitch leads have disagreed with each other by up to a pin or two
+   before converging on the count above, which is exactly why this project's standard throughout
+   has been to verify against the real consumer rather than trust a visual read. **Confirm with a
+   continuity tester (multimeter beep mode) against a known-ground pin before wiring anything to
+   pin 8 or 9** — this is the same caution the Nuvoton SWD section above already asks for, and it
+   matters more here, since miswiring a debug line into the wrong GPIO on a powered board is the
+   actual risk this whole guide exists to avoid.
 4. **Test the connection on a low-stakes target first if at all possible** before trusting it on
    the real device — if you have any other TLSR82xx-family board (even a cheap dev board bought
    specifically for practice), confirm the tool can read that chip's info before relying on the
