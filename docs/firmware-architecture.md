@@ -60,6 +60,17 @@ firmware image in the first place*:
 | **Nuvoton M031TD2AE** (Arm Cortex-M0, 64KB flash, 12× 16-bit PWM channels) | A second, independently-programmable MCU on the same board. Not yet dumped or analyzed — different vendor toolchain entirely (standard Arm, not Telink TC32). **Not the heater driver** — that's now confirmed to run on the TLSR8258 itself (see [Where the heater output is driven](#where-the-heater-output-is-driven) below), which was this chip's leading candidate role. Its actual job is still open. |
 | **SouthChip SC8922A** | A 2-3 cell Li-ion boost battery charger IC. Fixed-function analog/mixed-signal silicon — no firmware, not a candidate for anything BLE- or update-related. |
 
+**TLSR8258 pin assignment** — the real part marking (`TLSR8258 F1KET48`) matches Telink's own
+`TLSR8258F512ET48` datasheet variant exactly (F512 = 512KB flash, ET48 = QFN48 package), so its
+published pin diagram applies directly to this exact board, not just the chip family in general:
+
+<p align="center"><img src="../assets/chips/tlsr8258-pinout.png" width="520" alt="TLSR8258F512ET48 QFN48 pin assignment"></p>
+
+This resolves the SWire pad location flagged as unknown in
+[Hardware Setup § Part 3](hardware-setup.md#part-3-tlsr8258-swire-recovery-tooling) — see that
+section for the photo-correlated physical pin location and why it still needs a continuity-test
+confirmation before being trusted blind.
+
 **Correction (superseded by a newer firmware build's analysis):** this section previously named
 the M031 as the leading candidate for driving the heating element, on the reasoning that an
 exhaustive search of the TLSR8258 image found no PWM/duty-varying GPIO write, and the M031's 12

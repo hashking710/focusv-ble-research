@@ -129,6 +129,28 @@ This is the one that matters most before any real firmware experiment on the mai
    approach as the Nuvoton's SWD pads above. Telink's own reference designs typically label this
    pin `SWM`/`SWS` on schematics; on the physical board it may just be an unlabeled test point
    near the chip.
+
+   **Likely physical location, from the datasheet pinout** (see
+   [Firmware Architecture § Board hardware](firmware-architecture.md#board-hardware) for the full
+   pin diagram — the real part marking `TLSR8258 F1KET48` matches Telink's `TLSR8258F512ET48`
+   QFN48 variant exactly, so this diagram is for the exact chip on this board, not a lookalike):
+   the datasheet lists **pin 9 (`SWS`/`UART_RTS`/`PA<7>`)** as the primary SWire pin, with
+   **pin 8 (`DP(SWS)`/`PA<6>`)** as an alternate — Telink parts can be configured to use either.
+
+   Correlating this against the real board photo (pin 1 is marked by the small dot visible on the
+   chip package, standard QFN convention — see
+   [`tlsr8258-sws-candidate.png`](../assets/chips/tlsr8258-sws-candidate.png)): counting pins
+   along the one edge clearly resolved in the photo places pins 8 and 9 two pins before the
+   package corner nearest the silkscreened `R43`/`C27`/`R61` footprints, which is consistent with
+   a series-resistor-protected debug line (a common pattern in reference designs, to protect the
+   chip if the debug line is probed while the board is powered). **This is a photo-correlated
+   estimate, not a confirmed pinout** — the photo's resolution isn't sharp enough to count
+   individual 0.5mm-pitch leads with certainty, and this project's own standard throughout has been to verify against the real
+   consumer, not a visual guess. **Confirm with a continuity tester (multimeter beep mode)
+   against a known-ground pin before wiring anything to pin 8 or 9** — this is the same caution
+   the Nuvoton SWD section above already asks for, and it matters more here, since miswiring a
+   debug line into the wrong GPIO on a powered board is the actual risk this whole guide exists to
+   avoid.
 4. **Test the connection on a low-stakes target first if at all possible** before trusting it on
    the real device — if you have any other TLSR82xx-family board (even a cheap dev board bought
    specifically for practice), confirm the tool can read that chip's info before relying on the
