@@ -391,26 +391,45 @@ The address spacing (`0x1D000` = 118,784 bytes) exactly matches one 240×240 RGB
 (115,200 bytes) rounded up to a whole number of 4KB sectors — consistent with the two save slots
 documented in [BLE Protocol](ble-protocol.md)'s screensaver section.
 
-### Real firmware A/B mechanism
+### Real firmware OTA mechanism — corrected
 
-The actual firmware self-update mechanism (as distinct from the screensaver slots above) appears
-to be:
+**The "two-phase staging" model this section used to describe was wrong, at least on Aeris —
+there is no staging buffer and no separate finalize/copy step.** That model was a reasonable
+reading of the boot-time validity check alone (below), but tracing the actual live OTA write
+path on Aeris (the real GATT write callback, disassembly `0x116ec`) found a single-phase
+mechanism instead: blocks are written directly to their final address as they arrive, at
+`block_index*16 + base`, where `base` is a fixed struct field that nothing in the binary ever
+sets — Telink's standard BSS zero-init leaves it at `0`, confirmed by finding every one-line
+setter that touches this struct and none of them touching that field. There's no finalize step
+because there's nothing to finalize: the bytes land in their real, final location the moment
+each block is written. Full trace in [Open Questions](open-questions.md), including the one
+thing this doesn't settle — the equivalent trace hasn't been re-run on Carta 2's own binary yet,
+and Carta 2's boot-time check (below) does erase starting at `0x40000`, not `0`. The simplest
+reading given what Aeris's mechanism actually looks like is that Carta 2 uses the identical
+direct-write pattern with its own `base` constant simply set to `0x40000` — i.e. Carta 2's live
+firmware runs from `0x40000`, not `0x0`, with no copying between them — but that's carried over
+from Aeris's confirmed mechanism, not independently re-derived on Carta 2 yet.
+
+The boot-time check itself, independent of the above:
 
 - A validity check reads the 40-byte header at the very start of the flash chip (real address
   `0x0`) and checks for the `KNLT` magic at byte offset 8.
 - If valid, a large region (61 sectors, ≈244KB — comfortably more than the actual firmware image
-  size) is erased starting at real flash address `0x40000`, used as a **staging buffer** for an
-  incoming update — the live, running image at address `0x0` is never touched during the
-  transfer itself.
+  size) is erased starting at real flash address `0x40000` on Carta 2.
 - If the header at address `0` is *not* valid, the same erase targets address `0` directly
   instead — most plausibly a recovery/first-flash fallback path, not the normal update route.
+- On Aeris, the equivalent pre-erase (same shape: a fixed-size sweep, skipping sectors already
+  blank) runs once at boot from the main init function, over a ~124-128KB region at base `0`, set
+  by two hardcoded immediates (`124`, `0x20000`) at a single, very early call site — not derived
+  from any live OTA command. This is exactly why an ordinary in-order OTA transfer never needs its
+  own erase call: by the time any transfer can start, the target region was already erased at the
+  last boot. (A separate, second erase path does exist inside the live write callback, but only
+  triggers on a sequence gap — a defensive re-erase for a resumed/interrupted transfer.)
 
-**No evidence of a hardware bank-remap register was found** — the confirmed boot chain (above) is
-a single, fixed execution location at address `0`. The working model is therefore a two-phase
-update: receive and verify the new image at the `0x40000` staging area, then some **separate,
-not-yet-located finalize step** erases address `0` and copies the verified bytes down, before a
-reboot. See [Open Questions](open-questions.md) — this finalize step, the real GATT write-callback
-that receives OTA bytes, and where the erase-trigger flag gets set are all still unconfirmed.
+**No evidence of a hardware bank-remap register was found** on either device — the confirmed boot
+chain is a single, fixed execution location. See [Open Questions](open-questions.md) for the
+remaining gap (Carta 2's own base re-derivation) and what independently re-confirming it would
+take.
 
 ## Custom firmware: device-native hardware ramp
 

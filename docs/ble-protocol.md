@@ -334,6 +334,15 @@ the device rejecting or misinterpreting the transfer — see
 [Firmware Architecture](firmware-architecture.md) for what happens on the device side, and
 [Open Questions](open-questions.md) for what's still unconfirmed about this path.
 
+**This is one mechanism, not two** — it writes whatever file it's given, starting at the device's
+fixed base address, with no notion of "this is a patch" vs "this is a stock image." Reverting a
+device (pushing the original stock file back over a currently-patched one) goes through this exact
+same code, the exact same checks, with no size comparison against what's currently installed
+anywhere in the path (confirmed on Aeris — see [Firmware Architecture](firmware-architecture.md)).
+[`tools/ota-flash.html`](../tools/ota-flash.html) in this repo is a standalone implementation of
+this sequence for exactly that purpose: push either direction, from any machine, without the main
+app. Keep whatever stock file you started from — it's the revert path.
+
 **Legacy Carta devices use a genuinely different, ASCII-hex-based OTA sub-protocol** (each 32-byte
 firmware chunk becomes an ASCII hex string with a checksum suffix, sent as UTF-8 text) — not
 covered in detail here since modern hardware doesn't use it.

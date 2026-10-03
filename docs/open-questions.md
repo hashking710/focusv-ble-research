@@ -56,6 +56,40 @@ against these exact gaps rather than "more reverse engineering in general."
   their targets. Full details in
   [Firmware Architecture § Custom firmware](firmware-architecture.md#custom-firmware-device-native-hardware-ramp)
   and the patch repo's Carta 2 README.
+- **The real OTA-receive GATT write callback, and the finalize/copy step — both resolved, and the
+  two-phase staging model they were filed under turned out to be wrong (for Aeris; see caveat
+  below).** Found on Aeris (disassembly address `0x116ec`, reached from the OTA characteristic's
+  write dispatcher at `0x11688`) by address-by-address decompilation once the function-boundary gap
+  around it was noticed (Ghidra had no function defined across roughly `0x1169c`-`0x119cc` at all,
+  which is exactly why earlier passes missed it). Full dispatch confirmed: opcodes `0xFF00`/`01`/`02`
+  for START/BEGIN/FINISH, a per-block nibble-CRC16 check, and the actual write at `block_index*16 +
+  base` via the same flash-write primitive used everywhere else in the firmware. There is no
+  finalize/copy step **because there's no staging bank to copy from** — `base` is a struct field
+  (RAM address `0x843a48+0x1c`) that nothing in the binary ever writes, and Telink's standard BSS
+  zero-init leaves it at `0`. Confirmed by elimination: found every setter touching this struct (a
+  cluster of one-line accessor functions at `0x11664`-`0x1168d`, each just storing its single
+  parameter into one field) and none of them touches `+0x1c`, while `+0x4`/`+0x8` (the pre-erase
+  region's size) are set once, at early boot (`0x62e`, hardcoded immediates `124`/`0x20000`, not
+  anything session-derived). That same struct is read by a boot-time-only routine (`FUN_000119cc`,
+  called once from main init, never from the live OTA path) that sweeps the region in 4KB sectors
+  and erases only the ones not already blank — which is also why a live block write never needs its
+  own erase call for the ordinary in-order case: by the time any OTA session can start, the whole
+  target region was already erased at the last boot. (A *second*, separate erase loop does exist
+  inside the live write-callback, keyed off the same struct, but only triggers on a sequence gap —
+  a defensive re-erase for a resumed/interrupted transfer, not the normal path.) This was
+  cross-checked against the real client (`terpline-web`'s `lib/protocol/ota.ts`): it sends 16-byte
+  blocks indexed from 0 with no address/bank field at all, which only makes sense if the device's
+  own base is fixed and the same every session — consistent with what the binary shows.
+  **Caveat, and the one thing this doesn't settle:** this was traced on Aeris's binary specifically.
+  The original finding this retires (below) was about the Carta 2 boot-validity check seeing an
+  erase at real flash address `0x40000`, not `0x0`. The simplest reading, given what Aeris's
+  mechanism actually looks like, is that Carta 2 uses the identical pre-erase/direct-write pattern
+  with its own `base` constant set to `0x40000` instead of `0` (i.e. Carta 2's live firmware just
+  runs from `0x40000`, no staging-then-copy involved) — but that's an inference from Aeris's
+  confirmed mechanism, not something re-derived on Carta 2's own binary yet. Doing that trace (same
+  method: find the struct, find every setter, confirm nothing sets `+0x1c` to anything but `0x40000`
+  or that it's a hardcoded immediate matching it) is the natural next step before fully closing this
+  for Carta 2 too.
 
 ## Firmware
 
@@ -66,24 +100,15 @@ against these exact gaps rather than "more reverse engineering in general."
   logic-analyzer work on its pins to make any progress — not something static analysis of the
   TLSR8258 image alone can resolve further.
 - **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
-  flash address `0`) and an erase-target decision between address `0` and a staging area at
-  `0x40000` are confirmed (see [Firmware Architecture](firmware-architecture.md)), but no evidence exists in this image
-  of a hardware bank-remap mechanism — the boot chain always executes from a single fixed
-  location. What actually decides which bytes end up at address `0` before the CPU starts
-  executing (mask-ROM bootloader, or something else) is not part of this dumped image and
+  flash address `0`) is confirmed (see [Firmware Architecture](firmware-architecture.md)). The
+  erase this check triggers landing on address `0x40000` on Carta 2 no longer looks like evidence
+  of a staging bank — see the resolved OTA write-callback item above, which found Aeris uses the
+  identical pre-erase/direct-write mechanism with its base simply set to `0`, no copy step at all —
+  but Carta 2's own `0x40000` base hasn't been independently re-derived the same way yet, so it's
+  not fully closed out. Separately and still genuinely open regardless of which model is right:
+  what actually decides which bytes end up at the device's real running address before the CPU
+  starts executing (mask-ROM bootloader, or something else) is not part of this dumped image and
   couldn't be determined by analyzing it.
-- 📡 **The real OTA-receive GATT write callback.** The separate OTA characteristic (see
-  [BLE Protocol](ble-protocol.md)) is confirmed at the protocol level, but the firmware-side function that
-  actually receives those 20-byte CRC16'd blocks and where the erase-trigger flag gets set were
-  not located after several different search strategies (address-by-address decompilation,
-  whole-image literal-constant search, and a GUI-assisted pass once Ghidra's function-boundary
-  gaps were fixed). A promising-looking lead (a jump-table-driven sub-dispatcher near the erase
-  logic) turned out to be unrelated session-cancel/temperature-limit-clamping code, not the OTA
-  path — recorded here so it isn't re-chased.
-- 📡 **The `0x40000` → `0x0` finalize/copy step.** Following from the point above — assuming the
-  two-phase stage-then-copy model in [Firmware Architecture](firmware-architecture.md) is correct, the code that
-  performs the final copy (and whatever self-flash-safety handling it needs, since this would be
-  overwriting the flash region it may itself be executing from) has not been located.
 - **Two 4-byte fields in the 40-byte custom header, ahead of the `KNLT` magic — now mostly
   resolved.** Direct byte comparison of two real firmware files (different device targets,
   completely different size and content) showed these two fields are **identical across both** —

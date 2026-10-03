@@ -95,10 +95,11 @@ Still planned, not yet sourced:
 - **A passive BLE sniffer** (e.g. an nRF52840 dongle running an open-source BLE sniffer
   firmware/Wireshark plugin) — captures the over-the-air link layer directly, without
   establishing its own connection, so it can watch the real app and a real device talk to each
-  other simultaneously. Targeted at the OTA-mechanism items in
-  [Open Questions](docs/open-questions.md) — the real GATT write-callback, where the erase-trigger
-  flag gets set, the finalize/copy step — none of which have been resolvable through active
-  capture alone.
+  other simultaneously. The real GATT write-callback, the erase mechanism, and why there's no
+  finalize/copy step were all resolved by static analysis instead (see
+  [Open Questions](docs/open-questions.md)) — what a sniffer would still add is confirming Carta
+  2's own base address the same way, and the mask-ROM bootloader question that no amount of
+  flash-image analysis alone can settle.
 
 This section will move to "Status" once hardware is in hand and produces something concrete to
 publish.
