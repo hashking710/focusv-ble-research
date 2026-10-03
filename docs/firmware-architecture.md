@@ -393,22 +393,32 @@ documented in [BLE Protocol](ble-protocol.md)'s screensaver section.
 
 ### Real firmware OTA mechanism — corrected
 
-**The "two-phase staging" model this section used to describe was wrong, at least on Aeris —
-there is no staging buffer and no separate finalize/copy step.** That model was a reasonable
-reading of the boot-time validity check alone (below), but tracing the actual live OTA write
-path on Aeris (the real GATT write callback, disassembly `0x116ec`) found a single-phase
+**The "two-phase staging" model this section used to describe was wrong — there is no staging
+buffer and no separate finalize/copy step, on any of the three devices.** That model was a
+reasonable reading of Carta 2's boot-time validity check alone (below), but tracing the actual
+live OTA write path on all three devices independently found the identical single-phase
 mechanism instead: blocks are written directly to their final address as they arrive, at
-`block_index*16 + base`, where `base` is a fixed struct field that nothing in the binary ever
-sets — Telink's standard BSS zero-init leaves it at `0`, confirmed by finding every one-line
-setter that touches this struct and none of them touching that field. There's no finalize step
-because there's nothing to finalize: the bytes land in their real, final location the moment
-each block is written. Full trace in [Open Questions](open-questions.md), including the one
-thing this doesn't settle — the equivalent trace hasn't been re-run on Carta 2's own binary yet,
-and Carta 2's boot-time check (below) does erase starting at `0x40000`, not `0`. The simplest
-reading given what Aeris's mechanism actually looks like is that Carta 2 uses the identical
-direct-write pattern with its own `base` constant simply set to `0x40000` — i.e. Carta 2's live
-firmware runs from `0x40000`, not `0x0`, with no copying between them — but that's carried over
-from Aeris's confirmed mechanism, not independently re-derived on Carta 2 yet.
+`block_index*16 + base`. On every device, `base` resolves to `0`:
+
+- **Aeris** (callback at disassembly `0x116ec`): `base` is a struct field that nothing in the
+  binary ever sets — Telink's standard BSS zero-init leaves it at `0`, confirmed by finding every
+  one-line setter touching this struct and none of them touching that field.
+- **Carta 2** (callback at `0x189ec`): same struct shape, same elimination proof, same result.
+- **Carta Sport** (callback at `0xe2cc`): a different code-generation choice — `base` lives in a
+  standalone global rather than a packed struct — but the same conclusion: that variable has
+  exactly one reference in the entire firmware image (the read used by the gap-recovery erase
+  loop), so it's never written either, and stays at its BSS-zero default of `0`.
+
+There's no finalize step on any of them because there's nothing to finalize: the bytes land in
+their real, final location the moment each block is written. Full trace (exact addresses, the
+setter enumeration, and the gap-recovery erase loop each was found through) is in
+[Open Questions](open-questions.md).
+
+**This means Carta 2's boot-time validity check erasing at `0x40000` (below) is not the live OTA
+staging area it looked like** — the live write path there uses base `0`, same as the other two.
+What that `0x40000` erase is actually for is now open again, not resolved by this (see Open
+Questions) — most plausibly an unrelated recovery/fallback path that happens to erase a large
+region without it being where OTA writes land.
 
 The boot-time check itself, independent of the above:
 
@@ -418,18 +428,19 @@ The boot-time check itself, independent of the above:
   size) is erased starting at real flash address `0x40000` on Carta 2.
 - If the header at address `0` is *not* valid, the same erase targets address `0` directly
   instead — most plausibly a recovery/first-flash fallback path, not the normal update route.
-- On Aeris, the equivalent pre-erase (same shape: a fixed-size sweep, skipping sectors already
-  blank) runs once at boot from the main init function, over a ~124-128KB region at base `0`, set
-  by two hardcoded immediates (`124`, `0x20000`) at a single, very early call site — not derived
-  from any live OTA command. This is exactly why an ordinary in-order OTA transfer never needs its
-  own erase call: by the time any transfer can start, the target region was already erased at the
-  last boot. (A separate, second erase path does exist inside the live write callback, but only
-  triggers on a sequence gap — a defensive re-erase for a resumed/interrupted transfer.)
+- On Aeris and Carta Sport, the equivalent pre-erase (same shape: a fixed-size sweep, skipping
+  sectors already blank) runs once at boot from the main init function, over a region sized by
+  hardcoded immediates set at a single, very early call site on each device — not derived from any
+  live OTA command. This is exactly why an ordinary in-order OTA transfer never needs its own
+  erase call on any of the three: by the time any transfer can start, the target region was
+  already erased at the last boot. (A separate, second erase path exists inside each device's live
+  write callback, but only triggers on a sequence gap — a defensive re-erase for a
+  resumed/interrupted transfer.)
 
-**No evidence of a hardware bank-remap register was found** on either device — the confirmed boot
-chain is a single, fixed execution location. See [Open Questions](open-questions.md) for the
-remaining gap (Carta 2's own base re-derivation) and what independently re-confirming it would
-take.
+**No evidence of a hardware bank-remap register was found** on any of the three devices — the
+confirmed boot chain is a single, fixed execution location per device. See
+[Open Questions](open-questions.md) for what remains genuinely open (what the Carta 2 `0x40000`
+erase is actually for, and the mask-ROM bootloader question).
 
 ## Custom firmware: device-native hardware ramp
 
