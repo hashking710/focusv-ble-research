@@ -106,6 +106,7 @@
 
 <script>
 const SERVICE_UUID = '1011123e-8535-b5a0-7140-a304d2495cb7';
+const READ_CHAR_UUID = '1011123e-8535-b5a0-7140-a304d2495cb8';
 const WRITE_CHAR_UUID = '1011123e-8535-b5a0-7140-a304d2495cb9';
 const OTA_SERVICE_UUID = '00010203-0405-0607-0809-0a0b0c0d1912';
 const OTA_WRITE_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d2b12';
@@ -113,6 +114,25 @@ const OTA_WRITE_CHAR_UUID = '00010203-0405-0607-0809-0a0b0c0d2b12';
 const PRE_OTA_WAIT_MS = 350;
 const BLOCK_DELAY_MS = 8;
 const BLOCK_DATA_SIZE = 16;
+
+// Matches terpline-web's useBleConnection.ts exactly: a device that just resolved
+// gatt.connect() isn't always immediately ready for the next GATT call, and some
+// Web Bluetooth implementations can leave a GATT op pending forever on failure
+// instead of rejecting -- both confirmed on real hardware/browsers, not theoretical.
+const CONNECT_RETRIES = 3;
+const CONNECT_RETRY_DELAY_MS = 500;
+const GATT_TIMEOUT_MS = 20000;
+const NOTIFY_TIMEOUT_MS = 10000;
+
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
+}
 
 const $ = id => document.getElementById(id);
 const dot = $('dot'), statusText = $('statusText'), deviceInfo = $('deviceInfo');
@@ -142,16 +162,48 @@ function updateFlashButton() {
   btnFlash.disabled = !(device && writeChar && otaChar && firmwareBytes);
 }
 
+// A single gatt.connect() -> getPrimaryService -> getCharacteristic pass can fail
+// on the very first attempt right after connecting, on real devices -- the
+// production app works around this with a disconnect-and-retry loop rather than
+// surfacing a connect failure the user would just have to retry by hand anyway.
+async function connectGattWithRetry(device) {
+  let lastError;
+  for (let attempt = 0; attempt <= CONNECT_RETRIES; attempt++) {
+    try {
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      const readChar = await service.getCharacteristic(READ_CHAR_UUID);
+      const wChar = await service.getCharacteristic(WRITE_CHAR_UUID);
+      return { server, readChar, writeChar: wChar };
+    } catch (e) {
+      lastError = e;
+      if (attempt >= CONNECT_RETRIES) throw lastError;
+      try { if (device.gatt.connected) device.gatt.disconnect(); } catch (_) {}
+      await new Promise(r => setTimeout(r, CONNECT_RETRY_DELAY_MS));
+    }
+  }
+  throw lastError;
+}
+
 async function connect() {
+  let dev;
   try {
-    device = await navigator.bluetooth.requestDevice({
+    dev = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
       optionalServices: [SERVICE_UUID, OTA_SERVICE_UUID, 'device_information', 'battery_service', 'generic_access'],
     });
-    device.addEventListener('gattserverdisconnected', () => { setConnected(false); writeChar = null; otaChar = null; });
-    const server = await device.gatt.connect();
-    const service = await server.getPrimaryService(SERVICE_UUID);
-    writeChar = await service.getCharacteristic(WRITE_CHAR_UUID);
+    dev.addEventListener('gattserverdisconnected', () => { setConnected(false); writeChar = null; otaChar = null; });
+
+    const { server, readChar, writeChar: wChar } = await withTimeout(
+      connectGattWithRetry(dev), GATT_TIMEOUT_MS, 'connecting timed out -- the device did not respond in time');
+    // Enabling notifications is part of the real connection handshake (a CCCD
+    // write the device sees over the air) even though this tool never reads the
+    // notified values -- skipping it means flashing through a connection shaped
+    // differently than every connection this device has ever actually accepted.
+    await withTimeout(readChar.startNotifications(), NOTIFY_TIMEOUT_MS, 'timed out enabling notifications');
+
+    device = dev;
+    writeChar = wChar;
     try {
       const otaService = await server.getPrimaryService(OTA_SERVICE_UUID);
       otaChar = await otaService.getCharacteristic(OTA_WRITE_CHAR_UUID);
@@ -163,6 +215,12 @@ async function connect() {
     setConnected(true);
   } catch (e) {
     statusText.textContent = 'Connect failed: ' + e.message;
+    // A timed-out or failed GATT sequence can leave the native side still
+    // mid-connection (seen on iOS wrapper browsers) -- disconnect explicitly so a
+    // retry starts clean instead of hanging again.
+    try {
+      if (dev && dev.gatt && dev.gatt.connected) dev.gatt.disconnect();
+    } catch (_) {}
   }
 }
 
