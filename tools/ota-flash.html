@@ -71,8 +71,12 @@
     real update mechanism the official app uses (see
     <a href="../docs/ble-protocol.md#real-firmware-ota--a-completely-separate-protocol" target="_blank">docs/ble-protocol.md</a>).
     Only use a file you're completely sure is a real, correctly-built firmware image for this
-    exact device model — a wrong or corrupted file can leave it unresponsive. Keep the device
-    powered and in range and don't close this tab until the transfer finishes. This is a generic
+    exact device model — a wrong or corrupted file can leave it unresponsive. The firmware file
+    itself has no reliably-readable model field to check this for you (see
+    <a href="../docs/firmware-architecture.md" target="_blank">docs/firmware-architecture.md</a>),
+    so check the <b>Model</b> line that appears after connecting against the file you're about to
+    push, every time. Keep the device powered and in range and don't close this tab until the
+    transfer finishes. This is a generic
     flashing tool: it works the same way whether the file is a patched build or the original stock
     firmware — keeping your original download around means you can always push it back here to
     fully revert.
@@ -123,6 +127,45 @@ const CONNECT_RETRIES = 3;
 const CONNECT_RETRY_DELAY_MS = 500;
 const GATT_TIMEOUT_MS = 20000;
 const NOTIFY_TIMEOUT_MS = 10000;
+const IDENTITY_READ_TIMEOUT_MS = 5000;
+
+// The device's model code (e.g. "D9BL", "E5TG") lives in the standard User Data
+// service (0x181C), in the characteristic the spec calls "Last Name" (0x2A90) --
+// repurposed by Focus V. Bucketed by prefix per docs/ble-protocol.md: D9*=Quantum
+// (Carta 2), E5*=Aeris, S3*=Sport. This is the one safety check this tool can
+// actually make: it can't tell what device a firmware FILE targets (the header's
+// only confirmed field is the KNLT magic -- see firmware-architecture.md), so
+// instead it tells you plainly what you're connected to, so you can check that
+// against the file you picked before pushing it.
+const USER_DATA_SERVICE = 'user_data';
+const MODEL_CODE_CHAR = 0x2a90;
+const SOFTWARE_REVISION_CHAR = 'software_revision_string';
+
+function modelFromCode(code) {
+  if (!code) return null;
+  if (code.startsWith('D9')) return 'Carta 2 (Quantum)';
+  if (code.startsWith('E5')) return 'Aeris';
+  if (code.startsWith('S3')) return 'Carta Sport';
+  return null;
+}
+
+async function readString(server, service, characteristicId) {
+  const svc = await server.getPrimaryService(service);
+  const characteristic = await svc.getCharacteristic(characteristicId);
+  const value = await characteristic.readValue();
+  const text = String.fromCharCode(...new Uint8Array(value.buffer)).replace(/\u0000/g, '').trim();
+  return text || null;
+}
+
+// Best-effort only -- some Web Bluetooth implementations don't expose these
+// characteristics, and connecting shouldn't fail just because identity can't be read.
+async function readOptional(read) {
+  try {
+    return await withTimeout(read(), IDENTITY_READ_TIMEOUT_MS, 'read timed out');
+  } catch (e) {
+    return null;
+  }
+}
 
 function withTimeout(promise, ms, message) {
   return new Promise((resolve, reject) => {
@@ -190,7 +233,7 @@ async function connect() {
   try {
     dev = await navigator.bluetooth.requestDevice({
       acceptAllDevices: true,
-      optionalServices: [SERVICE_UUID, OTA_SERVICE_UUID, 'device_information', 'battery_service', 'generic_access'],
+      optionalServices: [SERVICE_UUID, OTA_SERVICE_UUID, 'device_information', 'battery_service', 'generic_access', USER_DATA_SERVICE],
     });
     dev.addEventListener('gattserverdisconnected', () => { setConnected(false); writeChar = null; otaChar = null; });
 
@@ -210,7 +253,14 @@ async function connect() {
     } catch (e) {
       otaChar = null;
     }
+
+    const modelCode = await readOptional(() => readString(server, USER_DATA_SERVICE, MODEL_CODE_CHAR));
+    const firmwareVersion = await readOptional(() => readString(server, 'device_information', SOFTWARE_REVISION_CHAR));
+    const modelName = modelFromCode(modelCode);
+
     deviceInfo.innerHTML = `<b>Name:</b> ${device.name || '(unnamed)'}<br><b>ID:</b> ${device.id}<br>` +
+      `<b>Model:</b> ${modelName ? `<span class="ok">${modelName}</span> (code ${modelCode})` : '<span class="err">could not be read -- verify by hand before flashing</span>'}<br>` +
+      `<b>Current firmware:</b> ${firmwareVersion || '<span class="muted">unknown</span>'}<br>` +
       `<b>OTA channel:</b> ${otaChar ? '<span class="ok">available</span>' : '<span class="err">not found on this device</span>'}`;
     setConnected(true);
   } catch (e) {
