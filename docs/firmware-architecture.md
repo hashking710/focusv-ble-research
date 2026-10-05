@@ -482,15 +482,18 @@ ramps (the same profiles as the app's presets, in `common/ramp_presets.c`). A co
 started at the 150°F sentinel with no uploaded waypoints runs the selected built-in preset, shifted
 by the setup offset and clamped to 440–520°F; an upload always takes precedence.
 
-- **Selection.** A hold from the idle screen (event `0xF` on Aeris and Sport, `−` held on Carta 2)
-  opens a picker that is consumed before the stock handler sees it. Carta 2: `+`/`−` step through
-  the six presets, a click leaves; a black box over the stock target line shows the number and six
-  markers. Aeris and Sport: single clicks step through the first four presets, shown as lit LEDs,
-  and a hold leaves. The selection is stored in its own flash byte, so it survives power cycles.
-- **Why the hold is consumed.** Confirmed by decompiling the idle branch of each button-event
-  consumer (Aeris `0x4ee8`, Sport `0x45cc`, Carta 2 `0x5618`): a hold from the idle state does not
-  stop anything (stop needs an active session), but it increments the shared gesture counter at
-  struct `+0x60` and sets the gesture timers. Left alone, it would throw off a later click count.
+- **Selection and on/off.** A hold from the idle state (event `0xF` on Aeris and Sport, `−` held,
+  event 3, on Carta 2) opens a picker whose events never reach the stock handler. Carta 2: `+`/`−`
+  step through six presets, a double click (event 8) switches the ramp system on or off, a click
+  leaves; a black box over the stock target line shows the choice. Aeris and Sport: single clicks
+  step through four presets on the LEDs, a triple click (event 9) switches on or off, a hold leaves.
+  The selection and the on/off state live in their own flash bytes. The picker closes, passing the
+  event on, as soon as the device leaves idle, and honours the stock power-on event gate.
+- **Why these gestures are free.** Read from each consumer's idle branch (Aeris `0x4ee8`, Sport
+  `0x45cc`, Carta 2 `0x5618`): an idle hold on Aeris and Sport only stops a running session, and
+  screen 0 on the Carta 2 only acts on a click. An earlier on/off hook on the Aeris/Sport LED-preset
+  counter (`0x50d2`/`0x47a4`) was removed: it sat on the triple-click (event 9) handler, not a
+  four-click one, and switched the LEDs off as a side effect.
 - **Offset.** Sent as `0xCC` marker `0xBB` with the offset in byte 14. The stock `0xCC` handler reads
   packet bytes 2–13 only (marker at byte 13): checked by resolving every register-indexed load in each
   handler's body, on all three devices. Byte 14 is never read, so the offset can ride there without
@@ -501,14 +504,17 @@ by the setup offset and clamped to 440–520°F; an upload always takes preceden
   (`0x15a34` / `0xe734` / `0xec3c`) was identified as the SDK's `bls_att_pushNotifyData`: its body
   builds an ATT Handle Value Notification, and every stock reply uses it with handle 27. The app
   sends a sync on connect, so a patched device always announces itself; a stock one sends nothing new.
-- **Unknown markers on stock Carta 2 aren't a pure no-op.** In the `0xCC` handler, any marker other
-  than `0x66` (in UI states other than 1) falls through to a post-command path at `0x11dc2` that
-  redraws screen 15 and runs further code. The app's ordinary commands only use `0xA5`/`0xAF`, so
-  stock devices never see an unknown marker in normal use. This is why detection doesn't use a
-  `0xCC` probe. The effect of that path isn't traced yet.
-- **Screen and LEDs.** The Carta 2 overlay is drawn from the `0xce70` hook the idle screen calls
-  every frame. Aeris and Sport show the selection on their LEDs, which follow the LED setting — with
-  LEDs off, nothing is shown, same as the ramp display.
+- **What an unknown marker does on stock firmware.** Aeris and Sport: it resets the keep-awake
+  counter (`0xFA` into `+0x40`) and exits -- effectively nothing. Carta 2: any marker other than
+  `0x66` runs the same post-command housekeeping a start or stop does (`0x11dc2`): `0x10c98` clamps
+  the preset tables to the device limits (635 °F / 335 °C) and re-syncs them, `0x10b38` re-applies
+  settings, and screen 15 is drawn. The waypoint and offset markers therefore also trigger that
+  housekeeping on a Carta 2, patched or not. Detection doesn't send a probe for this reason: it
+  rides on a reply the device already sends.
+- **Screen and LEDs.** The Carta 2 overlay is drawn from the event hook on every change and from
+  the `0xce70` hook when stock redraws the idle screen. Aeris and Sport show the selection on their
+  LEDs, which follow the LED setting. The control button's light isn't driven: the stock effects
+  compute and output its colour in the same call each tick, so a later write is never shown.
 
 **A real mistake, caught before it shipped, worth recording precisely rather than smoothing over**:
 an earlier pass through this same work identified the Carta 2 orchestrator as `FUN_0000ad4c`,
