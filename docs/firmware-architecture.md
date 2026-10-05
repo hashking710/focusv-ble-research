@@ -513,8 +513,11 @@ by the setup offset and clamped to 440–520°F; an upload always takes preceden
   rides on a reply the device already sends.
 - **Screen and LEDs.** The Carta 2 overlay is drawn from the event hook on every change and from
   the `0xce70` hook when stock redraws the idle screen. Aeris and Sport show the selection on their
-  LEDs, which follow the LED setting. The control button's light isn't driven: the stock effects
-  compute and output its colour in the same call each tick, so a later write is never shown.
+  LEDs and the control button's light, which follow the LED setting. The button light: on Aeris an
+  RGB LED on PB5-PB7 driven by a software-PWM timer interrupt (`0x49c`) from duty values
+  `0x845602`/`0x8455fc`/`0x8455fe` (0-100); on Sport one more addressable LED sent by `0x8efc`. The
+  patch wraps the single call to each LED effect dispatcher (Aeris `0x920c` at `0x61ae`, Sport
+  `0x8ff8` at `0x57ee`) and sets both lights itself while a ramp or the picker owns them.
 
 **A real mistake, caught before it shipped, worth recording precisely rather than smoothing over**:
 an earlier pass through this same work identified the Carta 2 orchestrator as `FUN_0000ad4c`,
