@@ -118,6 +118,7 @@ unless noted otherwise.
 | `0xCC` | 16 | Test-fire / short preview | Same shape, `marker = (0x66, 0x0A)`. |
 | `0xCC` | 16 | *Custom firmware only, beta* — save ramp waypoint 1-5 | Same shape, `marker ∈ {0xB1..0xB5}`. No-op (unrecognized) on stock firmware. See [Firmware Architecture](firmware-architecture.md#custom-firmware-device-native-hardware-ramp-beta). |
 | `0xCC` | 16 | *Custom firmware only, beta* — arm the device-native ramp | Same shape as the normal start row above, `marker = 0xA5`, but with a fixed sentinel temperature (150°F) in place of a real target. Behaves as an ordinary (if unreachable) start command on stock firmware. |
+| `0xCC` | 16 | *Custom firmware only, beta* — set the built-in preset offset | Same shape, `marker = 0xBB`, with the offset (signed, −10 to +15 °F) in byte 14. Byte 14 is never read by the stock `0xCC` handler on any of the three devices, and the custom slot, durations and preset ranks are written back unchanged. No-op on stock firmware. |
 | `0x77` | 12 | Pre-OTA date/time set (distinct from `0xDD`'s date/time write) | `[77,0C, yearHi,Lo, month, day, hour, minute, 0,0,0, 77]` |
 | `0xDD` | 12 | Set date/time (also triggers a full state-dump response — see Connection flow) | `[DD,0C, yearHi,Lo, month, day, hour, min, 00,00,00, DD]` |
 | `0x11` | 12 | Apply device settings / session sync / power off | See full breakdown below |

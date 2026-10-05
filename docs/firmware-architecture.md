@@ -473,9 +473,31 @@ the split exists).
   (150°F or 160°F, scale forced to Fahrenheit) arms the ramp instead of starting a normal session
   at that unreachable target. A trampoline around the confirmed per-tick orchestrator then
   advances through the saved waypoints on its own, each tick.
-- All five new marker values are otherwise unused anywhere in any of the three stock images, and
+- All new marker values (`0xB1`-`0xB5` and `0xBB`) are otherwise unused anywhere in any of the three stock images, and
   both the waypoint-save and the sentinel-start writes are ordinary, harmless `0xCC` packets on
   unpatched firmware.
+
+**On-device presets, the picker, and the setup offset.** Concentrate mode also ships six built-in
+ramps (the same profiles as the app's presets, in `common/ramp_presets.c`). A concentrate session
+started at the 150°F sentinel with no uploaded waypoints runs the selected built-in preset, shifted
+by the setup offset and clamped to 440–520°F; an upload always takes precedence.
+
+- **Selection.** A hold from the idle screen (event `0xF` on Aeris and Sport, `−` held on Carta 2)
+  opens a picker that is consumed before the stock handler sees it. Carta 2: `+`/`−` step through
+  the six presets, a click leaves; a black box over the stock target line shows the number and six
+  markers. Aeris and Sport: single clicks step through the first four presets, shown as lit LEDs,
+  and a hold leaves. The selection is stored in its own flash byte, so it survives power cycles.
+- **Why the hold is consumed.** Confirmed by decompiling the idle branch of each button-event
+  consumer (Aeris `0x4ee8`, Sport `0x45cc`, Carta 2 `0x5618`): a hold from the idle state does not
+  stop anything (stop needs an active session), but it increments the shared gesture counter at
+  struct `+0x60` and sets the gesture timers. Left alone, it would throw off a later click count.
+- **Offset.** Sent as `0xCC` marker `0xBB` with the offset in byte 14. The stock `0xCC` handler reads
+  packet bytes 2–13 only (marker at byte 13): checked by resolving every register-indexed load in each
+  handler's body, on all three devices. Byte 14 is never read, so the offset can ride there without
+  changing any stock behaviour. The patch's dispatcher receives byte 14 along with the marker.
+- **Screen and LEDs.** The Carta 2 overlay is drawn from the `0xce70` hook the idle screen calls
+  every frame. Aeris and Sport show the selection on their LEDs, which follow the LED setting — with
+  LEDs off, nothing is shown, same as the ramp display.
 
 **A real mistake, caught before it shipped, worth recording precisely rather than smoothing over**:
 an earlier pass through this same work identified the Carta 2 orchestrator as `FUN_0000ad4c`,
