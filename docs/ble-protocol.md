@@ -116,9 +116,9 @@ unless noted otherwise.
 | `0xCC` | 16 | Extend an active session (~10s) | Same shape, `marker = (0x66, 0x0A)` two-byte pair. |
 | `0xCC` | 16 | Cancel / stop an active session | Same shape, `marker = 0xAF`. |
 | `0xCC` | 16 | Test-fire / short preview | Same shape, `marker = (0x66, 0x0A)`. |
-| `0xCC` | 16 | *Custom firmware only, beta* — save ramp waypoint 1-5 | Same shape, `marker ∈ {0xB1..0xB5}`. No-op (unrecognized) on stock firmware. See [Firmware Architecture](firmware-architecture.md#custom-firmware-device-native-hardware-ramp-beta). |
+| `0xCC` | 16 | *Custom firmware only, beta* — save ramp waypoint 1-5 | Same shape, `marker ∈ {0xB1..0xB5}`. Unrecognized on stock firmware, but **not a pure no-op on the Carta 2**: an unmatched marker runs the handler's post-command path (screen 15 redraw and further code at `0x11dc2`), whose effect isn't traced yet. See [Firmware Architecture](firmware-architecture.md#custom-firmware-device-native-hardware-ramp-beta). |
 | `0xCC` | 16 | *Custom firmware only, beta* — arm the device-native ramp | Same shape as the normal start row above, `marker = 0xA5`, but with a fixed sentinel temperature (150°F) in place of a real target. Behaves as an ordinary (if unreachable) start command on stock firmware. |
-| `0xCC` | 16 | *Custom firmware only, beta* — set the built-in preset offset | Same shape, `marker = 0xBB`, with the offset (signed, −10 to +15 °F) in byte 14. Byte 14 is never read by the stock `0xCC` handler on any of the three devices, and the custom slot, durations and preset ranks are written back unchanged. No-op on stock firmware. |
+| `0xCC` | 16 | *Custom firmware only, beta* — set the built-in preset offset | Same shape, `marker = 0xBB`, with the offset (signed, −10 to +15 °F) in byte 14. Byte 14 is never read by the stock `0xCC` handler on any of the three devices, and the custom slot, durations and preset ranks are written back unchanged. Unrecognized on stock firmware (same Carta 2 caveat as the waypoint row). |
 | `0x77` | 12 | Pre-OTA date/time set (distinct from `0xDD`'s date/time write) | `[77,0C, yearHi,Lo, month, day, hour, minute, 0,0,0, 77]` |
 | `0xDD` | 12 | Set date/time (also triggers a full state-dump response — see Connection flow) | `[DD,0C, yearHi,Lo, month, day, hour, min, 00,00,00, DD]` |
 | `0x11` | 12 | Apply device settings / session sync / power off | See full breakdown below |
@@ -370,6 +370,7 @@ covered in detail here since modern hardware doesn't use it.
 | `0xD2` | len 7 | Ack/readback for `0xD1`, same field order (LED timeout, then device timeout) — confirmed to echo exactly what was just sent |
 | `0xC2` | len 8 | Response to `0xCD`/`0xC1` (calibration) — `byte[2]` = success flag, `byte[3-4]`/`byte[5-6]` = flower/concentrate ohms |
 | `0x73` | len 4 | Screensaver transfer session-ready ack (see transfer sequence above) |
+| `0xBC` | len 12 | *Custom firmware only* — announcement, sent after the `0xAA` dab-counter reply: `[BC, 0C, 'T','R','M','P', protocol, device (1 Carta 2, 2 Aeris, 3 Sport), enabled, preset, offset (signed °F), BC]`. Stock firmware never sends it. |
 
 ### `0xDD` per-sample telemetry record (when `byte[1] == 0`)
 

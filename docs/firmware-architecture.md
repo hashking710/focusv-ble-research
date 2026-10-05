@@ -495,6 +495,17 @@ by the setup offset and clamped to 440–520°F; an upload always takes preceden
   packet bytes 2–13 only (marker at byte 13): checked by resolving every register-indexed load in each
   handler's body, on all three devices. Byte 14 is never read, so the offset can ride there without
   changing any stock behaviour. The patch's dispatcher receives byte 14 along with the marker.
+- **Detection.** The patch wraps the stock call that sends the `0xAA` dab-counter reply (Carta 2
+  `0x11562`, Aeris `0xb066`, Sport `0xa9ea`), sends it unchanged, then queues an `0xBC` announcement
+  from its tick, retrying while the notify queue is busy. The notify routine on each device
+  (`0x15a34` / `0xe734` / `0xec3c`) was identified as the SDK's `bls_att_pushNotifyData`: its body
+  builds an ATT Handle Value Notification, and every stock reply uses it with handle 27. The app
+  sends a sync on connect, so a patched device always announces itself; a stock one sends nothing new.
+- **Unknown markers on stock Carta 2 aren't a pure no-op.** In the `0xCC` handler, any marker other
+  than `0x66` (in UI states other than 1) falls through to a post-command path at `0x11dc2` that
+  redraws screen 15 and runs further code. The app's ordinary commands only use `0xA5`/`0xAF`, so
+  stock devices never see an unknown marker in normal use. This is why detection doesn't use a
+  `0xCC` probe. The effect of that path isn't traced yet.
 - **Screen and LEDs.** The Carta 2 overlay is drawn from the `0xce70` hook the idle screen calls
   every frame. Aeris and Sport show the selection on their LEDs, which follow the LED setting — with
   LEDs off, nothing is shown, same as the ramp display.
