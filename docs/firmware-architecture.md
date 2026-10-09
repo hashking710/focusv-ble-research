@@ -458,66 +458,63 @@ erase is actually for, and the mask-ROM bootloader question).
 Stock firmware has no native "ramp" concept — the only way to sweep temperature over time is for
 a client to send a series of timed `0xCC` writes (see [`tools/focusv-controller.html`](../tools/focusv-controller.html)'s
 Ramp tab). A patch adds a genuine device-native ramp instead: waypoints saved once to flash, then
-run autonomously by the firmware's own tick loop with no client connected. **This is now a
-complete, shipped, independently-verified patch for all three devices (Carta 2, Aeris, Carta
-Sport)** — the full source, patch bytes, and per-device build fingerprints live in the companion
-[focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) repo; what follows here
-is the confirmed architecture behind it, not the patch itself (see that repo's `LEGAL.md` for why
-the split exists).
+run autonomously by the firmware's own tick loop with no client connected. **The patch exists
+for all three devices (Carta 2, Aeris, Carta Sport), built and verified in software (address
+traces, host tests, a Carta 2 screen test) but not yet run on hardware** -- the source, patch
+bytes, per-device build fingerprints, the protocol ([`PROTOCOL.md`](https://github.com/hashking710/focusv-ramp-firmware/blob/main/PROTOCOL.md))
+and the verification ledger ([`VERIFICATION.md`](https://github.com/hashking710/focusv-ramp-firmware/blob/main/VERIFICATION.md))
+live in the companion [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware)
+repo. What follows is the architecture in brief; that repo is the reference (see its `LEGAL.md`
+for why the split exists).
 
 **Mechanism, same shape across all three devices:**
 
-- `0xCC` writes with marker `0xB1`-`0xB5` (in place of the normal `0xA5`/`0xAF`/`0x66`) save that
-  packet's already-parsed temp + duration as ramp waypoint 1-5 into a dedicated flash sector.
-- `0xCC` with marker `0xA5` carrying a fixed sentinel temperature far outside any real range
-  (150°F or 160°F, scale forced to Fahrenheit) arms the ramp instead of starting a normal session
-  at that unreachable target. A trampoline around the confirmed per-tick orchestrator then
-  advances through the saved waypoints on its own, each tick.
-- All new marker values (`0xB1`-`0xB5` and `0xBB`) are otherwise unused anywhere in any of the three stock images, and
-  both the waypoint-save and the sentinel-start writes are ordinary, harmless `0xCC` packets on
-  unpatched firmware.
+- **Commands ride on the stock `0xCC` packet**, which stock parses before the patch sees it (the
+  patch hooks the marker-byte load, byte 13): `0xB1`-`0xBA` save flower / concentrate stages 1-5
+  from the packet's custom values, `0xBB` sets the setup offset, `0xBD` switches stock / ramp mode,
+  `0xBE` chooses the built-in preset, and the stock start `0xA5` with `0x52` in byte 14 asks for that
+  session to run as a ramp. Stock reads bytes 2-13 only (checked by resolving every register-indexed
+  load in each handler), so byte 14 is free.
+- **A ramp runs inside a stock session.** Each stage writes the active preset slot (both units) and
+  clears "reached", the way stock changes temperature mid-session; the stock heat-up, PID and
+  safety limits stay in charge. The session countdown is the ramp's clock, and every hold is time
+  at temperature (all three stock clocks wait for "reached"). The slot is put back at the end.
+- **Starting.** From an app: the `0xA5` request above, on whatever preset is active. From the
+  device: a session on a preset slot holding the trigger (150 °F, or 65 / 66 °C).
+- **The store** lives outside both OTA banks (stock wipes the bank it isn't running from at every
+  boot), as two copies with a commit byte written last, so a power cut never loses it.
+- **Detection.** The patch wraps the stock send of the `0xAA` dab-counter reply (Carta 2 `0x11562`,
+  Aeris `0xb066`, Sport `0xa9ea`) and queues an `0xBC` announcement (protocol, device, flags --
+  ramps enabled, stock mode, a ramp running -- preset, offset), also sent on every change and when a
+  ramp starts or ends. The notify routines (`0x15a34` / `0xe734` / `0xec3c`) are the SDK's
+  `bls_att_pushNotifyData` (handle 27).
 
-**On-device presets, the picker, and the setup offset.** Concentrate mode also ships six built-in
-ramps (the same profiles as the app's presets, in `common/ramp_presets.c`). A concentrate session
-started at the 150°F sentinel with no uploaded waypoints runs the selected built-in preset, shifted
-by the setup offset and clamped to 440–520°F; an upload always takes precedence.
+**Stock mode and the device gestures.** Stock mode (`0xBD`) turns every hook into a pass-through.
+It's also switched on the devices themselves: on the Carta 2 at power-on (hold − while pressing the
+power button five times for ramp mode, + for stock mode -- stock ignores the main button while
+another is down, so the patch counts those presses from the pins), on the Aeris and Sport with five
+presses and the fifth held (a hold with the press count at 5, unused in stock).
 
-- **Selection and on/off.** A hold from the idle state (event `0xF` on Aeris and Sport, `−` held,
-  event 3, on Carta 2) opens a picker whose events never reach the stock handler. Carta 2: `+`/`−`
-  step through six presets, a double click (event 8) switches the ramp system on or off, a click
-  leaves; a black box over the stock target line shows the choice. Aeris and Sport: single clicks
-  step through four presets on the LEDs, a triple click (event 9) switches on or off, a hold leaves.
-  The selection and the on/off state live in their own flash bytes. The picker closes, passing the
-  event on, as soon as the device leaves idle, and honours the stock power-on event gate.
-- **Why these gestures are free.** Read from each consumer's idle branch (Aeris `0x4ee8`, Sport
-  `0x45cc`, Carta 2 `0x5618`): an idle hold on Aeris and Sport only stops a running session, and
-  screen 0 on the Carta 2 only acts on a click. An earlier on/off hook on the Aeris/Sport LED-preset
-  counter (`0x50d2`/`0x47a4`) was removed: it sat on the triple-click (event 9) handler, not a
-  four-click one, and switched the LEDs off as a side effect.
-- **Offset.** Sent as `0xCC` marker `0xBB` with the offset in byte 14. The stock `0xCC` handler reads
-  packet bytes 2–13 only (marker at byte 13): checked by resolving every register-indexed load in each
-  handler's body, on all three devices. Byte 14 is never read, so the offset can ride there without
-  changing any stock behaviour. The patch's dispatcher receives byte 14 along with the marker.
-- **Detection.** The patch wraps the stock call that sends the `0xAA` dab-counter reply (Carta 2
-  `0x11562`, Aeris `0xb066`, Sport `0xa9ea`), sends it unchanged, then queues an `0xBC` announcement
-  from its tick, retrying while the notify queue is busy. The notify routine on each device
-  (`0x15a34` / `0xe734` / `0xec3c`) was identified as the SDK's `bls_att_pushNotifyData`: its body
-  builds an ATT Handle Value Notification, and every stock reply uses it with handle 27. The app
-  sends a sync on connect, so a patched device always announces itself; a stock one sends nothing new.
-- **What an unknown marker does on stock firmware.** Aeris and Sport: it resets the keep-awake
-  counter (`0xFA` into `+0x40`) and exits -- effectively nothing. Carta 2: any marker other than
-  `0x66` runs the same post-command housekeeping a start or stop does (`0x11dc2`): `0x10c98` clamps
-  the preset tables to the device limits (635 °F / 335 °C) and re-syncs them, `0x10b38` re-applies
-  settings, and screen 15 is drawn. The waypoint and offset markers therefore also trigger that
-  housekeeping on a Carta 2, patched or not. Detection doesn't send a probe for this reason: it
-  rides on a reply the device already sends.
-- **Screen and LEDs.** The Carta 2 overlay is drawn from the event hook on every change and from
-  the `0xce70` hook when stock redraws the idle screen. Aeris and Sport show the selection on their
-  LEDs and the control button's light, which follow the LED setting. The button light: on Aeris an
-  RGB LED on PB5-PB7 driven by a software-PWM timer interrupt (`0x49c`) from duty values
-  `0x845602`/`0x8455fc`/`0x8455fe` (0-100); on Sport one more addressable LED sent by `0x8efc`. The
-  patch wraps the single call to each LED effect dispatcher (Aeris `0x920c` at `0x61ae`, Sport
-  `0x8ff8` at `0x57ee`) and sets both lights itself while a ramp or the picker owns them.
+**Built-in presets and the picker.** Concentrate mode ships six built-in ramps (`common/ramp_presets.c`),
+shifted by the setup offset and clamped to 440-520 °F; uploaded stages take precedence. On the Aeris
+and Sport a hold from idle (a single press, LEDs on) opens a picker: clicks step through four
+presets on the LEDs and the button light, a triple click switches the ramp system on or off, a hold
+leaves. The Carta 2 has no picker -- every idle gesture already has a stock meaning -- and its
+preset is chosen from an app (`0xBE`).
+
+**What a patch command does on stock firmware.** Aeris and Sport: it resets the keep-awake counter
+(`0xFA` into `+0x40`) and exits. Carta 2, on the live screen: any marker other than `0x66` runs the
+same post-command housekeeping a start or stop does (`0x11dc2`: `0x10c98` clamps the preset tables to
+the device limits and re-syncs them, `0x10b38` re-applies settings, view 15 is drawn). A stage save
+also writes the custom preset, as any `0xCC` packet does.
+
+**Screen and LEDs.** The Carta 2 draws a ramp screen (chart, meter, dab count, the Terpline logo
+streamed through the stock LCD driver) from hooks on its view functions, only while a ramp runs,
+and repaints the full stock view when it ends. The Aeris and Sport show progress and temperature on
+their LEDs and the control button's light (Aeris: an RGB LED on PB5-PB7, software PWM `0x49c`, duty
+`0x845602` / `0x8455fc` / `0x8455fe`; Sport: one more addressable LED sent by `0x8efc`), from a wrap
+of the single call to each LED effect dispatcher (Aeris `0x920c` at `0x61ae`, Sport `0x8ff8` at
+`0x57ee`).
 
 **A real mistake, caught before it shipped, worth recording precisely rather than smoothing over**:
 an earlier pass through this same work identified the Carta 2 orchestrator as `FUN_0000ad4c`,
