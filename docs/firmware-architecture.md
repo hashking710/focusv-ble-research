@@ -402,56 +402,47 @@ The address spacing (`0x1D000` = 118,784 bytes) exactly matches one 240×240 RGB
 (115,200 bytes) rounded up to a whole number of 4KB sectors — consistent with the two save slots
 documented in [BLE Protocol](ble-protocol.md)'s screensaver section.
 
-### Real firmware OTA mechanism — corrected
+### Real firmware OTA mechanism — dual bank
 
-**The "two-phase staging" model this section used to describe was wrong — there is no staging
-buffer and no separate finalize/copy step, on any of the three devices.** That model was a
-reasonable reading of Carta 2's boot-time validity check alone (below), but tracing the actual
-live OTA write path on all three devices independently found the identical single-phase
-mechanism instead: blocks are written directly to their final address as they arrive, at
-`block_index*16 + base`. On every device, `base` resolves to `0`:
+**An earlier version of this section said every update writes in place at base `0`. That was
+wrong.** It came from looking for a setter of the write-base field among the OTA callback's
+struct setters and finding none. The setter is in the boot path instead. All three devices use
+the Telink SDK's dual-bank OTA: an update is written to whichever bank the device is *not*
+running from, and the old image stays intact until the new one is complete.
 
-- **Aeris** (callback at disassembly `0x116ec`): `base` is a struct field that nothing in the
-  binary ever sets — Telink's standard BSS zero-init leaves it at `0`, confirmed by finding every
-  one-line setter touching this struct and none of them touching that field.
-- **Carta 2** (callback at `0x189ec`): same struct shape, same elimination proof, same result.
-- **Carta Sport** (callback at `0xe2cc`): a different code-generation choice — `base` lives in a
-  standalone global rather than a packed struct — but the same conclusion: that variable has
-  exactly one reference in the entire firmware image (the read used by the gap-recovery erase
-  loop), so it's never written either, and stays at its BSS-zero default of `0`.
+- **Banks.** Carta 2: `0x0` and `0x40000` (up to 248 KB each). Aeris and Carta Sport: `0x0` and
+  `0x20000` (up to 124 KB each). The sizes are set through the SDK's
+  `bls_ota_set_fwSize_and_fwBootAddr`, and the OTA start rejects a larger image.
+- **Write base, chosen at boot.** The boot code reads the chip's boot-bank register `0x80063e`.
+  When it reads `0` (running from bank 0), the OTA write base is set to the second bank's
+  address. Otherwise it is set to `0`:
+  - Carta Sport: disassembly `0xdd82`–`0xddd4`, base at `0x8429ac` (struct `0x842988` + `0x24`)
+  - Aeris: `0xd4dc`–`0xd516`, base at `0x843a64` (from `0x843a50`, or `0`)
+  - Carta 2: `0x147dc`–`0x14816`, base at `0x843a3c` (from `0x843a28`, or `0`)
+- **Block writes.** The live OTA write callbacks (Aeris `0x116ec`, Carta 2 `0x189ec`, Sport
+  `0xe2cc`) write each 16-byte block to `block_index*16 + base`, which is the other bank.
+- **Finalize.** While the transfer runs, the new image's flag byte (header offset 8) is held at
+  `0xFF` (Sport `0xe0ac`), so a half-written image is never bootable. On a verified finish,
+  finalize (Sport `0xe05c`) writes the new image's flag and then clears the old image's flag.
+  It then reboots through `0x109c` (`0x80006f = 0x20`). The boot ROM starts the bank whose flag
+  is valid and maps it to the execution address, which is what `0x80063e` reports. The Aeris and
+  Carta 2 finalize paths have the same SDK shape; only the Sport addresses are traced here.
+- **Other bank wiped at every boot.** The SDK init (`0xeb4c` → `0xe9b8`, called from `user_init`
+  `0x4420` on the Sport) clears the bank the device isn't running from. The app firmware has its
+  own wipe loops as well: Sport `0x5b80`–`0x5cc0` (32 sectors at `0x0` or `0x20000`), Aeris
+  `0x6004` / `0x637a` / `0x692e`, Carta 2 `0x5578` / `0x5592` (61 sectors at `0x0` or
+  `0x40000`). Because the target bank is already blank, an in-order transfer never needs an
+  erase. A second erase path inside each write callback only runs on a sequence gap, to re-erase
+  for a resumed transfer.
 
-There's no finalize step on any of them because there's nothing to finalize: the bytes land in
-their real, final location the moment each block is written. Full trace (exact addresses, the
-setter enumeration, and the gap-recovery erase loop each was found through) is in
-[Open Questions](open-questions.md).
+This explains the Carta 2 boot-time check that erases from `0x40000`, which earlier versions
+listed as an open question. It is this wipe: running from bank 0 (valid `KNLT` header at `0`),
+the device erases bank 1 at `0x40000`. Running from bank 1, it erases bank 0 instead.
 
-**This means Carta 2's boot-time validity check erasing at `0x40000` (below) is not the live OTA
-staging area it looked like** — the live write path there uses base `0`, same as the other two.
-What that `0x40000` erase is actually for is now open again, not resolved by this (see Open
-Questions) — most plausibly an unrelated recovery/fallback path that happens to erase a large
-region without it being where OTA writes land.
-
-The boot-time check itself, independent of the above:
-
-- A validity check reads the 40-byte header at the very start of the flash chip (real address
-  `0x0`) and checks for the `KNLT` magic at byte offset 8.
-- If valid, a large region (61 sectors, ≈244KB — comfortably more than the actual firmware image
-  size) is erased starting at real flash address `0x40000` on Carta 2.
-- If the header at address `0` is *not* valid, the same erase targets address `0` directly
-  instead — most plausibly a recovery/first-flash fallback path, not the normal update route.
-- On Aeris and Carta Sport, the equivalent pre-erase (same shape: a fixed-size sweep, skipping
-  sectors already blank) runs once at boot from the main init function, over a region sized by
-  hardcoded immediates set at a single, very early call site on each device — not derived from any
-  live OTA command. This is exactly why an ordinary in-order OTA transfer never needs its own
-  erase call on any of the three: by the time any transfer can start, the target region was
-  already erased at the last boot. (A separate, second erase path exists inside each device's live
-  write callback, but only triggers on a sequence gap — a defensive re-erase for a
-  resumed/interrupted transfer.)
-
-**No evidence of a hardware bank-remap register was found** on any of the three devices — the
-confirmed boot chain is a single, fixed execution location per device. See
-[Open Questions](open-questions.md) for what remains genuinely open (what the Carta 2 `0x40000`
-erase is actually for, and the mask-ROM bootloader question).
+**Consequences for anything that keeps data in flash:** anything stored inside either bank is
+lost on the next boot after an update. The ramp patch's store lives outside both banks (Carta 2
+`0xf0000`/`0xf1000`, Aeris and Sport `0x70000`/`0x71000`). An update image must also fit its
+bank, and a power cut mid-update leaves the running image untouched.
 
 ## Custom firmware: device-native hardware ramp
 
@@ -542,15 +533,21 @@ corrected address: the patch intercepts the marker *byte load* that runs uncondi
 any of the three comparisons, not any individual leaf of the chain.
 
 **Not yet tested on real hardware**, for any of the three devices — gated on recovery/flashing
-tooling (see [Hardware setup](hardware-setup.md)). The exact real-time meaning of one "tick" in
-each firmware's own scheduler (assumed ≈1 second, never independently clocked against a wall
-clock) and whether a long ramp can outlast the device's own built-in session-duration ceiling are
-both open until then, for all three devices.
+tooling (see [Hardware setup](hardware-setup.md)). Two questions that used to be listed as open
+here have since been answered by tracing:
+- **Tick length.** The hold countdown runs at 1 s per step on every device. The Aeris and Sport
+  call their timer 50 times a second and divide by a 50-call prescaler; the Carta 2 runs at
+  40 Hz with the same kind of divider.
+- **Session ceiling.** The built-in session limits are longer than the longest ramp (~35 min):
+  Carta 2 ~112 min (270000 ticks at 40 Hz, `0xb8b8`), Aeris 90 min (`0x8538`), Sport ~6 h
+  (`0x7fe0`).
+
+The per-row traces are in the patch repo's `VERIFICATION.md`.
 
 ### Carta 2 ("Quantum") — confirmed addresses
 
-- Central runtime struct: `0x843028`. Session-active `+0x1`, mode flag `+0x7` (0=flower,
-  1=concentrate), live PID target `+0x20`/`+0x22`, measured temperature `+0x1c` (confirmed via
+- Central runtime struct: `0x843028`. Session-active `+0x1`, temperature scale `+0x7` (written by
+  the `0xCC` handler from the packet's scale byte), flower/concentrate mode `+0x9`, live PID target `+0x20`/`+0x22`, measured temperature `+0x1c` (confirmed via
   the RTD/Callendar-Van Dusen conversion routine, `FUN_00008b08`, writing directly into this
   field), custom-value temperature `+0x36`/`+0x4e` (Celsius).
 - Per-tick orchestrator: `FUN_0000af2c`, called from `0x6e2e` (see above).

@@ -56,44 +56,43 @@ against these exact gaps rather than "more reverse engineering in general."
   their targets. Full details in
   [Firmware Architecture § Custom firmware](firmware-architecture.md#custom-firmware-device-native-hardware-ramp)
   and the patch repo's Carta 2 README.
-- **The real OTA-receive GATT write callback, and the finalize/copy step — both resolved, on all
-  three devices independently, and the two-phase staging model they were filed under turned out to
-  be wrong everywhere.** Found by the same method on each device: locate the OTA characteristic's
-  UUID bytes in the image, follow the GATT attribute-table entry that references them to its write
-  callback's function pointer, then trace that function. All three use an identical mechanism —
-  each incoming block is written directly to its final address as it arrives, at `block_index*16 +
-  base`, through the same flash-write primitive used everywhere else in that device's firmware —
-  just compiled differently per device:
-  - **Aeris**: callback at disassembly `0x116ec` (found via the write dispatcher at `0x11688`).
-    `base` is a struct field (RAM `0x843a48+0x1c`). Confirmed nothing in the binary ever writes it
-    by finding every one-line setter touching that struct (a cluster at `0x11664`-`0x1168d`) and
-    showing none touches `+0x1c`, while `+0x4`/`+0x8` (the pre-erase region's size) are set once at
-    early boot (`0x62e`, hardcoded immediates `124`/`0x20000`) — not session-derived. Telink's
-    standard BSS zero-init leaves `base` at `0`.
-  - **Carta 2**: same shape, same struct layout even (RAM `0x843a20+0x1c`), found the same way
-    (callback at `0x189ec`, dispatcher at `0x18cc8`'s neighborhood). Same elimination proof, same
-    setter cluster shape (`0x18960`-`0x1898d`), same result: nothing writes `+0x1c`, size is set
-    once at boot (`0x4ce`, immediates `248`/`0x40000`) — `base` is `0` here too.
-  - **Carta Sport**: structurally different code generation (the compiler used a standalone global
-    variable rather than a packed struct for this field, and reads the OTA opcode from different
-    packet byte offsets), but the same mechanism underneath: callback at `0xe2cc`, the gap-recovery
-    erase loop reads `base` from RAM `0x8429ac` through a single literal-pool reference (`0xe86e`)
-    that is the *only* place in the entire 90,900-byte image this variable is ever touched — so it
-    too is never written, and stays at its BSS-zero default of `0`.
+- **The real OTA-receive GATT write callback, and where updates land: resolved on all three
+  devices. Both earlier models were wrong.** Each device's write callback was found the same way:
+  locate the OTA characteristic's UUID bytes in the image, then follow the GATT attribute-table
+  entry that references them to its write-callback pointer. Each 16-byte block is written to
+  `block_index*16 + base` through the device's normal flash-write primitive:
+  - **Aeris**: callback at disassembly `0x116ec` (write dispatcher `0x11688`), OTA struct at RAM
+    `0x843a48`, `base` at `+0x1c`.
+  - **Carta 2**: callback at `0x189ec`, struct at `0x843a20`, `base` at `+0x1c`.
+  - **Carta Sport**: callback at `0xe2cc`. The fields are laid out differently (struct
+    `0x842988`, `base` at `+0x24` = `0x8429ac`), and the OTA opcode is read from other packet
+    offsets. The mechanism is the same.
 
-  Each device was also confirmed to have the matching boot-time pre-erase routine (sweep the target
-  region in 4KB sectors, skip ones already blank, called once from main init, never from the live
-  OTA path) — which is why an ordinary in-order transfer never issues its own erase call on any of
-  the three. All three were cross-checked against the real client (`terpline-web`'s
-  `lib/protocol/ota.ts`): it sends 16-byte blocks indexed from 0 with no address/bank field at all,
-  which only makes sense if each device's own base is fixed and the same every session — consistent
-  with what every binary shows.
+  A later pass corrected an earlier conclusion that `base` is never written and stays `0`. That
+  conclusion came from checking only the setters near the callback. The real setter is in the
+  boot path. It reads the chip's boot-bank register `0x80063e`. When the device runs from bank 0,
+  it copies the second bank's address into `base`; when it runs from bank 1, it sets `base` to `0`.
+  - Sport: `0xdd82`–`0xddd4`
+  - Aeris: `0xd4dc`–`0xd516`, copying `0x843a50` (struct `+0x8`)
+  - Carta 2: `0x147dc`–`0x14816`, copying `0x843a28` (struct `+0x8`)
 
-  **What this means for the original theory**: Carta 2's boot-time validity check erasing at real
-  flash address `0x40000` is real (see below) but is **not** evidence of a staging-then-copy update
-  mechanism — the live OTA write path on Carta 2 writes directly to base `0`, same as the other two.
-  Whatever the `0x40000` erase is for, it isn't the mechanism `tools/ota-flash.html` or the real app
-  use to push an update.
+  That `+0x8` field is the bank address the SDK's `bls_ota_set_fwSize_and_fwBootAddr` call sets
+  once at early boot: Aeris `0x62e` (124 KB / `0x20000`), Carta 2 `0x4ce` (248 KB /
+  `0x40000`). So an update always goes to the bank the device isn't running from.
+
+  **Finalize, resolved too (traced on the Sport):**
+  - During the transfer, the new image's flag byte (header offset 8) is held at `0xFF` (`0xe0ac`).
+  - On completion, `0xe05c` writes the new flag and clears the old one.
+  - The device then reboots through `0x109c`.
+  - The boot ROM starts the bank with the valid flag.
+
+  At every boot, the SDK init and the app's own wipe loops erase the bank the device isn't
+  running from, which is why an in-order transfer never issues an erase. A second erase inside
+  each callback only runs on a sequence gap.
+
+  The real client (`terpline-web`'s `lib/protocol/ota.ts`) sends blocks indexed from 0 with no
+  address or bank field. That matches: the device picks the bank, not the client. Full write-up:
+  [Firmware Architecture § Real firmware OTA mechanism](firmware-architecture.md#real-firmware-ota-mechanism--dual-bank).
 
 ## Firmware
 
@@ -103,17 +102,14 @@ against these exact gaps rather than "more reverse engineering in general."
   and analysis (standard Arm/SWD, not the Telink TC32 toolchain used elsewhere in this repo) or
   logic-analyzer work on its pins to make any progress — not something static analysis of the
   TLSR8258 image alone can resolve further.
-- **Boot-time firmware bank/validity selection.** A validity check (KNLT header magic at real
-  flash address `0`) is confirmed (see [Firmware Architecture](firmware-architecture.md)). The
-  erase this check triggers landing on address `0x40000` on Carta 2 is **not** the live OTA write
-  mechanism's staging area — that's now independently confirmed to write directly to base `0` on
-  all three devices (see the resolved item above). What the `0x40000` erase on Carta 2's validity
-  check is actually for is now the open part of this item: possibly an unrelated recovery/fallback
-  path, possibly something else — not re-chased yet since it no longer blocks understanding the
-  live update mechanism. Separately and still genuinely open regardless: what actually decides
-  which bytes end up at the device's real running address before the CPU starts executing
-  (mask-ROM bootloader, or something else) is not part of this dumped image and couldn't be
-  determined by analyzing it.
+- **Boot-time firmware bank/validity selection — mostly resolved.** The Carta 2 boot check
+  reads the `KNLT` header at `0` and then erases from `0x40000` (or from `0` when the header at
+  `0` isn't valid). This is the dual-bank wipe of the bank the device isn't running from. See the
+  resolved OTA item above. **Still open:** the bank choice itself is made before any code in this
+  image runs, by the TLSR8258's mask-ROM bootloader reading each bank's flag byte. That ROM isn't
+  part of the dumped image, so its exact rules (for example, what it does if both flags are
+  valid) can't be read from it. What the image shows matches Telink's documented multi-boot
+  scheme, and register `0x80063e` reports the result.
 - **Two 4-byte fields in the 40-byte custom header, ahead of the `KNLT` magic — now mostly
   resolved.** Direct byte comparison of two real firmware files (different device targets,
   completely different size and content) showed these two fields are **identical across both** —
@@ -124,7 +120,8 @@ against these exact gaps rather than "more reverse engineering in general."
   code found in this image. **What's still open**: a much narrower 2-byte field (offset 12-13)
   that does genuinely vary between builds and doesn't match CRC16, CRC32, or Adler32 against any
   tried candidate byte range — likely an opaque build/sequence tag rather than a validated
-  checksum, but not proven. Also still open: whether the still-unlocated OTA-finalize code, or a
+  checksum, but not proven. Also still open: whether the OTA finalize code (located on the Sport at `0xe05c`; not yet
+  checked for header reads beyond the flag byte), or a
   silicon mask-ROM bootloader entirely outside this image, checks anything beyond what's confirmed
   here.
 - **A handful of protocol-level fields** with unconfirmed exact meaning even though their byte
@@ -139,7 +136,7 @@ currently-reachable public update manifest serves — meaning the specific binar
 performed against may not exactly match what's shipping right now. General architecture (boot
 chain, the session/PID control loop, flash layout conventions) is unlikely to shift much between
 point releases of the same firmware family, but anything specific to the OTA mechanism itself
-(the exact staging address, header field layout, or any of the still-unresolved items above)
+(the bank addresses, header field layout, or any of the still-unresolved items above)
 should be treated as a snapshot of one build, not a guaranteed-current spec, until independently
 re-confirmed against whichever build a given device is actually running. The cleanest way to
 re-verify: capture live BLE traffic during a real update rather than relying on static analysis

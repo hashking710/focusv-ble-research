@@ -12,8 +12,8 @@ hardware actually does, and diagnosing/recovering a device without depending on 
 See [`LEGAL.md`](LEGAL.md) for why this kind of work is on solid legal footing.
 
 **Companion repo**: [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) is
-a complete, independently-verified firmware patch (for all three devices) built on top of what's
-documented here — a phone-independent, on-device temperature ramp. That repo is the patch itself;
+a firmware patch for all three devices, built on top of what's documented here and verified in
+software (address traces, host tests), not yet run on hardware — a phone-independent, on-device temperature ramp. That repo is the patch itself;
 this one is how every address and protocol detail it relies on was found.
 
 <table>
