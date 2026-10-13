@@ -779,27 +779,22 @@
         <div class="stat"><div class="stat-label">Screen brightness</div><div class="stat-val" id="diagBrightness">--</div></div>
         <div class="stat"><div class="stat-label">Active LED preset</div><div class="stat-val" id="diagLedRank">--</div></div>
       </div>
-      <div class="card-title">Live telemetry (0xDD)</div>
+      <div class="card-title">Live status temperature (0x99)</div>
       <div class="stat-grid">
-        <div class="stat"><div class="stat-label">NTC temp</div><div class="stat-val" id="diagNtc">--</div></div>
-        <div class="stat"><div class="stat-label">TCR temp</div><div class="stat-val" id="diagTcr">--</div></div>
-        <div class="stat"><div class="stat-label">Power output</div><div class="stat-val" id="diagPower">--</div></div>
-        <div class="stat"><div class="stat-label">Set temp reached</div><div class="stat-val" id="diagReached">--</div></div>
-        <div class="stat"><div class="stat-label">PID Kt</div><div class="stat-val" id="diagKt">--</div></div>
-        <div class="stat"><div class="stat-label">PID Kp</div><div class="stat-val" id="diagKp">--</div></div>
-        <div class="stat"><div class="stat-label">PID Ki</div><div class="stat-val" id="diagKi">--</div></div>
-        <div class="stat"><div class="stat-label">PID Kd</div><div class="stat-val" id="diagKd">--</div></div>
+        <div class="stat"><div class="stat-label">Measured</div><div class="stat-val" id="diagMeasured">--</div></div>
+        <div class="stat"><div class="stat-label">Status interval</div><div class="stat-val" id="diagInterval">--</div></div>
+        <div class="stat"><div class="stat-label">Session</div><div class="stat-val" id="diagSession">--</div></div>
       </div>
-      <div class="card-title" style="margin-top:18px">Live chart — last 60s (NTC vs TCR)</div>
+      <div class="card-title" style="margin-top:18px">Measured-temperature trace — last 60s</div>
       <svg id="diagSvg" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
-      <div class="hint">This is the same live PID/telemetry feed behind Focus V's own
-        internal "Real-Time Results" screen, which their production app hides behind a
-        build-profile flag — see <code>ble-protocol-notes.md</code>. Their "Legacy Mode"
-        indicator is deliberately not reproduced here: it's driven by
-        <code>devicePowerLevelPidStatus</code>, which has zero write call sites anywhere in
-        the official bundle — it's always its default value in the real app too, so
-        showing it here would be fake data, not a real device read. Unlike the ramp curve,
-        this chart updates during any active session, not just while a ramp is running.</div>
+      <button type="button" class="ghost" id="btnExportStatusTrace" style="margin-top:10px">⬇ Export captured status CSV</button>
+      <div class="hint">This uses measured temperature from the readable <code>0x99</code>
+        status notification and records samples only while a session is active. The separate
+        <code>0xDD</code> PID telemetry is AES-encrypted; its bytes are not decoded here. This
+        trace is lower-rate and does not expose PID power or a device-native ramp's interpolated
+        target. Use it to compare session-to-session behavior, not as high-rate controller data.
+        For raw packet research, unhide <code>0x99</code>/<code>0xDD</code> in the advanced log and
+        export its timestamped frames.</div>
     </div>
   </div>
 
@@ -857,11 +852,6 @@ const live = {
   lpm: 0,                 // 0x99 byte[17] lo nibble — Low Power Mode
   flowerOhms: null,       // 0xCE — atomizer resistance
   concOhms: null,
-  ntcTemp: null,          // 0xDD — thermistor temperature (native °C, converted for display)
-  tcrTemp: null,          // 0xDD — TCR-derived temperature, 'new'/'max' atomizers only
-  powerOutput: null,      // 0xDD — live power output
-  pidKt: null, pidKp: null, pidKi: null, pidKd: null, // 0xDD — live PID gains
-  setTempReached: null,   // 0xDD byte[2]
   flowerPresetsF: null, concPresetsF: null, // 5-slot preset tables, °F (0x55/0x33 sync)
   flowerPresetsC: null, concPresetsC: null, // same, °C (0x44/0x22 sync)
   ssSlot1Active: null, ssSlot2Active: null, // 0x82 n[5]/n[6] — slot has a screensaver saved
@@ -872,7 +862,11 @@ const live = {
 let rampStartTime = null;
 let measuredSamples = [];
 let commandedSamples = [];
-let diagSamples = [];
+let statusSamples = [];
+let statusChartSamples = [];
+let lastStatusAt = null;
+let lastStatusGapMs = null;
+let statusTraceStartAt = null;
 // Default curve tuned for concentrate: drop the dab around 275°F (midpoint of a
 // 250-300°F load), ramp up to the usual 460°F finishing temp, then push further to
 // 485°F as an optional clean-off stage for atomizers that need it.
@@ -993,7 +987,7 @@ const NOISY_RX_OPCODES = new Set([0x99, 0xDD]);
 
 function log(dir, bytes, note, opcode) {
   if (dir === 'RX' && opcode != null && NOISY_RX_OPCODES.has(opcode) && $('logMuteNoisy').checked) return;
-  const t = new Date().toLocaleTimeString([], { hour12: false });
+  const t = new Date().toISOString();
   const div = document.createElement('div');
   div.textContent = `${t} ${dir} ${hex(bytes)}${note ? '  — ' + note : ''}`;
   logEl.appendChild(div);
@@ -1138,7 +1132,8 @@ function setConnected(on) {
     settingsSynced = false;
     live.flowerPresetsF = live.concPresetsF = live.flowerPresetsC = live.concPresetsC = null;
     live.ledPresetRank = null;
-    diagSamples = [];
+    lastStatusAt = null;
+    lastStatusGapMs = null;
     selectedPresetMode = null;
     selectedPresetRank = null;
     renderPresets();
@@ -1175,14 +1170,9 @@ function updateDiagnosticsUI() {
   $('diagCharging').textContent = live.charging ? 'Yes' : 'No';
   $('diagBrightness').textContent = live.screenBrightness != null ? live.screenBrightness + '/15' : '--';
   $('diagLedRank').textContent = live.ledPresetRank ? '#' + live.ledPresetRank : 'None';
-  $('diagNtc').textContent = live.ntcTemp != null ? live.ntcTemp + '°' : '--';
-  $('diagTcr').textContent = live.tcrTemp != null ? live.tcrTemp + '°' : '--';
-  $('diagPower').textContent = live.powerOutput ?? '--';
-  $('diagReached').textContent = live.setTempReached == null ? '--' : (live.setTempReached ? 'Yes' : 'No');
-  $('diagKt').textContent = live.pidKt ?? '--';
-  $('diagKp').textContent = live.pidKp ?? '--';
-  $('diagKi').textContent = live.pidKi ?? '--';
-  $('diagKd').textContent = live.pidKd ?? '--';
+  $('diagMeasured').textContent = live.measuredTemp != null ? `${live.measuredTemp}°${live.scale === 34 ? 'C' : 'F'}` : '--';
+  $('diagInterval').textContent = lastStatusGapMs === null ? '--' : `${lastStatusGapMs} ms`;
+  $('diagSession').textContent = live.sessionUnderway ? 'Active' : 'Idle';
   const chEl = $('unknownFlagCharging');
   if (chEl) chEl.textContent = live.deviceLocked == null ? '--' : (live.deviceLocked ? 'yes' : 'no');
 }
@@ -1191,24 +1181,19 @@ function drawDiagChart() {
   const svg = $('diagSvg');
   const now = Date.now();
   const windowMs = 60000;
-  const pts = diagSamples.filter(s => now - s.t <= windowMs);
-  const vals = pts.flatMap(s => [s.ntc, s.tcr]).filter(v => v != null);
-  if (pts.length < 2 || !vals.length) {
-    svg.innerHTML = '<text x="10" y="80" fill="#8b92a1" font-size="12">Waiting for live data…</text>';
+  const pts = statusChartSamples;
+  if (pts.length < 2) {
+    svg.innerHTML = '<text x="10" y="80" fill="#8b92a1" font-size="12">Waiting for active-session status samples…</text>';
     return;
   }
+  const vals = pts.map(s => s.measuredTemp);
   const minT = Math.min(...vals) - 10, maxT = Math.max(...vals) + 10;
   const x = t => ((t - (now - windowMs)) / windowMs) * 600;
   const y = v => 150 - ((v - minT) / (maxT - minT || 1)) * 130 - 10;
-  const ntcPts = pts.filter(s => s.ntc != null);
-  const tcrPts = pts.filter(s => s.tcr != null);
-  const ntcPath = ntcPts.length > 1 ? 'M ' + ntcPts.map(s => `${x(s.t)} ${y(s.ntc)}`).join(' L ') : '';
-  const tcrPath = tcrPts.length > 1 ? 'M ' + tcrPts.map(s => `${x(s.t)} ${y(s.tcr)}`).join(' L ') : '';
+  const measuredPath = 'M ' + pts.map(s => `${x(s.receivedAt)} ${y(s.measuredTemp)}`).join(' L ');
   svg.innerHTML = `
-    ${ntcPath ? `<path d="${ntcPath}" fill="none" stroke="#ffb454" stroke-width="2"/>` : ''}
-    ${tcrPath ? `<path d="${tcrPath}" fill="none" stroke="#5b9dff" stroke-width="2" stroke-dasharray="4,3"/>` : ''}
-    <text x="490" y="16" fill="#ffb454" font-size="11">— NTC</text>
-    <text x="490" y="30" fill="#5b9dff" font-size="11">- - TCR</text>
+    <path d="${measuredPath}" fill="none" stroke="#ffb454" stroke-width="2"/>
+    <text x="490" y="16" fill="#ffb454" font-size="11">— measured</text>
   `;
 }
 
@@ -1312,6 +1297,9 @@ function onNotify(event) {
   const op = n[0];
   let note = '';
   if (op === 0x99 && n.length === 20 && (n[3] === 0x11 || n[3] === 0x22) && n[19] === 0x99) {
+    const receivedAt = Date.now();
+    lastStatusGapMs = lastStatusAt === null ? null : receivedAt - lastStatusAt;
+    lastStatusAt = receivedAt;
     live.scale = n[3];
     live.flowerRank = (n[4] >> 4) & 0xF;
     live.concRank = n[4] & 0xF;
@@ -1351,6 +1339,30 @@ function onNotify(event) {
     if (rampStartTime !== null) {
       measuredSamples.push({ t: (Date.now() - rampStartTime) / 1000, temp: live.measuredTemp });
     }
+    if (live.sessionUnderway) {
+      if (statusTraceStartAt === null) statusTraceStartAt = receivedAt;
+      statusSamples.push({
+        receivedAt,
+        timestampUtc: new Date(receivedAt).toISOString(),
+        elapsedMs: receivedAt - statusTraceStartAt,
+        gapMs: lastStatusGapMs,
+        deviceModel: $('deviceModelSel').value,
+        measuredTemp: live.measuredTemp,
+        scale: live.scale === 34 ? 'C' : 'F',
+        atomizerCode: `0x${n[2].toString(16).padStart(2, '0')}`,
+        sessionRemainingRaw: n[5],
+        flowerSetTemp: live.flowerSetTemp,
+        flowerRank: live.flowerRank,
+        concSetTemp: live.concSetTemp,
+        concRank: live.concRank,
+      });
+      if (statusSamples.length > 50000) statusSamples.shift();
+      statusChartSamples.push({ receivedAt, measuredTemp: live.measuredTemp });
+      while (statusChartSamples.length && receivedAt - statusChartSamples[0].receivedAt > 60000) {
+        statusChartSamples.shift();
+      }
+      drawDiagChart();
+    }
     note = `0x99 state — battery=${n[12]}% measured=${live.measuredTemp}° underway=${live.sessionUnderway} flowerSet=${live.flowerSetTemp} concSet=${live.concSetTemp} sleepIn=${live.sleepIn}s | flowerRank=${live.flowerRank} concRank=${live.concRank} lpm=${live.lpm} locked=${live.deviceLocked} charging=${live.charging} screenBright=${live.screenBrightness} ledRank=${live.ledPresetRank} vib=${live.vibrationLevel}`;
   } else if (op === 0xAA && n.length === 19 && n[18] === 0xAA) {
     note = `0xAA telemetry (dab counters) — bytes[2-3]=${256 * n[2] + n[3]} bytes[4-5]=${256 * n[4] + n[5]}`;
@@ -1359,25 +1371,8 @@ function onNotify(event) {
     live.concOhms = 256 * n[4] + n[5];
     updateDiagnosticsUI();
     note = `atomizer ohms — flower=${live.flowerOhms} conc=${live.concOhms}`;
-  } else if (op === 0xDD && n.length >= 17 && n[1] === 0) {
-    // Live per-sample telemetry (not the raw session-log chunk branch, n[1]!==0 for that).
-    // Temps here are native Celsius from the device regardless of display unit — convert.
-    const isC = live.scale === 34;
-    const toDisp = c => isC ? Math.round(c) : Math.round(1.8 * c + 32);
-    live.ntcTemp = toDisp(256 * n[3] + n[4]);
-    live.tcrTemp = toDisp(256 * n[5] + n[6]);
-    live.powerOutput = 256 * n[7] + n[8];
-    live.pidKt = 256 * n[9] + n[10];
-    live.pidKp = parseFloat(((256 * n[11] + n[12]) / 100).toFixed(2));
-    live.pidKi = parseFloat(((256 * n[13] + n[14]) / 100).toFixed(2));
-    live.pidKd = parseFloat(((256 * n[15] + n[16]) / 100).toFixed(2));
-    live.setTempReached = n[2] > 0;
-    updateDiagnosticsUI();
-    const now = Date.now();
-    diagSamples.push({ t: now, ntc: live.ntcTemp, tcr: live.tcrTemp });
-    diagSamples = diagSamples.filter(s => now - s.t <= 60000);
-    drawDiagChart();
-    note = `0xDD telemetry — NTC=${live.ntcTemp}° TCR=${live.tcrTemp}° power=${live.powerOutput} Kt=${live.pidKt} Kp=${live.pidKp} Ki=${live.pidKi} Kd=${live.pidKd}`;
+  } else if (op === 0xDD) {
+    note = '0xDD encrypted/log traffic received; subtype and payload not decoded';
   } else if (op === 0xD2 && n.length === 7 && n[6] === 0xD2) {
     note = `timeout ack — a=${256 * n[2] + n[3]} b=${256 * n[4] + n[5]}`;
   } else if (LED_ACK_OPCODES[op] !== undefined && n.length === 20) {
@@ -1530,6 +1525,11 @@ async function readDeviceInfo() {
 
 async function connectToDevice(d) {
   try {
+    statusSamples = [];
+    statusChartSamples = [];
+    statusTraceStartAt = null;
+    lastStatusAt = null;
+    lastStatusGapMs = null;
     device = d;
     device.addEventListener('gattserverdisconnected', () => setConnected(false));
     await connectGatt();
@@ -2702,6 +2702,28 @@ function exportRampCsv() {
   a.click();
 }
 $('btnExportRamp').addEventListener('click', exportRampCsv);
+
+function exportStatusTraceCsv() {
+  if (!statusSamples.length) { alert('No active-session status samples yet.'); return; }
+  const columns = [
+    'timestamp_utc', 'elapsed_ms', 'status_gap_ms', 'device_model', 'measured_temp', 'scale',
+    'atomizer_code', 'session_remaining_raw', 'flower_set_temp_status',
+    'flower_rank', 'concentrate_set_temp_status', 'concentrate_rank',
+  ];
+  const rows = statusSamples.map(s => [
+    s.timestampUtc, s.elapsedMs, s.gapMs ?? '', s.deviceModel, s.measuredTemp, s.scale,
+    s.atomizerCode, s.sessionRemainingRaw, s.flowerSetTemp, s.flowerRank,
+    s.concSetTemp, s.concRank,
+  ].join(','));
+  const blob = new Blob([[columns.join(','), ...rows].join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  const objectUrl = URL.createObjectURL(blob);
+  a.href = objectUrl;
+  a.download = `focusv-status-trace-${Date.now()}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+$('btnExportStatusTrace').addEventListener('click', exportStatusTraceCsv);
 
 // ---- Ramp presets (named slots, save current setup / one-tap start-stop) ----
 

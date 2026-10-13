@@ -13,7 +13,9 @@ See [`LEGAL.md`](LEGAL.md) for why this kind of work is on solid legal footing.
 
 **Companion repo**: [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) is
 a firmware patch for all three devices, built on top of what's documented here and verified in
-software (address traces, host tests), not yet run on hardware — a phone-independent, on-device temperature ramp. That repo is the patch itself;
+software (address traces, host tests), providing a phone-independent, on-device temperature ramp.
+The user reports one completed ramp on an earlier patched Aeris image; the current rebuilt images
+and Carta 2/Sport patched operation have not been hardware-validated. That repo is the patch itself;
 this one is how every address and protocol detail it relies on was found.
 
 <table>
@@ -41,8 +43,8 @@ this one is how every address and protocol detail it relies on was found.
 
 | | |
 |---|---|
-| **[`tools/focusv-controller.html`](tools/focusv-controller.html)** | A from-scratch Web Bluetooth controller built against the documented protocol |
-| **[`tools/ble-tester.html`](tools/ble-tester.html)** | A lower-level BLE opcode tester/logger |
+| **[`tools/focusv-controller.html`](tools/focusv-controller.html)** | A from-scratch Web Bluetooth controller; exports active-session `0x99` status-temperature CSV traces (encrypted `0xDD` is kept opaque) |
+| **[`tools/ble-tester.html`](tools/ble-tester.html)** | A lower-level BLE opcode tester/logger with timestamped raw-notification capture, session markers, and JSON/CSV export for `0xDD`/`0x99` correlation |
 | **[`tools/ota-flash.html`](tools/ota-flash.html)** | Pushes a firmware file to the device over Bluetooth using the real OTA wire protocol — works for a patched build or for pushing the original stock firmware back to fully revert |
 | **[`tools/ghidra-scripts/`](tools/ghidra-scripts/)** | The Ghidra scripts used during firmware analysis (`DumpTC32.java`, `FindXrefs.java`, `dump_tc32.py`) |
 | **[`tools/render_mockups.py`](tools/render_mockups.py)** | Renders a preview of the Carta 2 ramp-graph screen and the Aeris/Sport LED gradient, by re-implementing the patch's own drawing logic in Python against your own firmware dump — used to generate the mockup images in [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware) |
@@ -71,24 +73,21 @@ possible) — not guesswork dressed up as fact. That said, some things remain ge
 see [`docs/open-questions.md`](docs/open-questions.md) rather than assuming silence means
 "solved."
 
-## Roadmap
+## Hardware validation roadmap
 
-Everything so far has come from static analysis (Ghidra) and *active* BLE capture (a tool that
-is itself the GATT client — `chrome://bluetooth-internals`, `focusv-controller.html`). That has a
-real ceiling: these devices only accept one central connection at a time, so an active-client
-tool can't watch the real official app talk to a device at the same time it's connected. Hardware
-to move past that ceiling is now sourced (see [Methodology § Hardware tooling](docs/methodology.md#hardware-tooling)
-for the reasoning and exact parts):
+Static analysis of the current stock builds has identified the TLSR8258 heater-output routine and
+the firmware's physical-button input path. These are software findings, not measurements of the
+signals on a running board. Active BLE capture also cannot observe the official app and device at
+once because the device accepts only one central connection. The next useful physical checks are:
 
-- **A logic analyzer** (8-channel, 24MHz), for passively probing the SPI flash bus and candidate
-  GPIO lines directly on the board — targeted at where the heating-element output is actually
-  driven, and how the physical button-gesture input is read (no GPIO-*read* primitive was ever
-  located in the firmware image itself — see [Open Questions](docs/open-questions.md)).
-- **An SWD probe**, for dumping and debugging the Nuvoton M031's own firmware directly — the
-  leading candidate for the heating-element driver, previously only theorized about from the
-  outside (see [Firmware Architecture § Board hardware](docs/firmware-architecture.md#board-hardware)).
-- **SWire tooling for the TLSR8258 itself** — a genuinely separate, non-obvious requirement from
-  the SWD probe above; see the Methodology doc for why.
+- **A logic analyzer** (8-channel, 24MHz), to passively observe the SPI flash bus and correlate the
+  firmware-traced heater-output and button-input signals with actual board behavior. See
+  [Open Questions](docs/open-questions.md) for the remaining hardware questions.
+- **An SWD probe**, to dump and identify the Nuvoton M031's own firmware. Its role is unknown; the
+  earlier heater-driver theory was superseded by finding the heater-output routine in the
+  TLSR8258 image. See [Firmware Architecture § Board hardware](docs/firmware-architecture.md#board-hardware).
+- **SWire tooling for the TLSR8258 itself** — a separate requirement from the SWD probe above; see
+  the Methodology doc for why.
 
 Still planned, not yet sourced:
 
@@ -101,15 +100,14 @@ Still planned, not yet sourced:
   2's own base address the same way, and the mask-ROM bootloader question that no amount of
   flash-image analysis alone can settle.
 
-This section will move to "Status" once hardware is in hand and produces something concrete to
-publish.
+Update this roadmap with measured results when these checks are performed; static traces alone do
+not close the hardware questions.
 
 ## Related
 
-This research feeds into [**Terpline**](https://terpline.hkdev.run) — **a work-in-progress
-project, not yet publicly launched.** The link is included for context on where this research is
-headed; the linked site should be expected to change, and the Terpline codebase itself isn't
-part of this repo.
+This research feeds into [**Terpline**](https://terpline.hkdev.run), which provides allowlisted beta
+firmware flashing for Aeris, Carta 2 and Carta Sport. The web application is maintained separately
+and is not part of this research repo.
 
 ## Contributing
 
@@ -130,4 +128,3 @@ this kind of research in the first place.
 Maintained by **[hashking.dev](https://hashking.dev)**.
 
 <br clear="left">
-

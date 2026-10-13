@@ -119,7 +119,9 @@ unless noted otherwise.
 | `0xCC` | 16 | *Custom firmware only, beta* — save ramp waypoint 1-5 | Same shape, `marker ∈ {0xB1..0xB5}` (flower) or `{0xB6..0xBA}` (concentrate); the waypoint is taken from the packet's custom values. Unrecognized on stock firmware: Aeris and Sport only reset their keep-awake counter; the Carta 2 runs the same post-command housekeeping as a start or stop (preset tables clamped to the device limits and re-synced, settings re-applied, screen 15 drawn). See [Firmware Architecture](firmware-architecture.md#custom-firmware-device-native-hardware-ramp). |
 | `0xCC` | 16 | *Custom firmware only, beta* — start the session as a ramp | The normal start row above (`marker = 0xA5`, every value echoed, both ranks included) with byte 14 = `0x52` (`R`). The device starts the active preset and the patch runs the mode's saved stages in its place. The request is valid for 3 seconds. Stock firmware never reads byte 14, so there this is a plain start. A custom preset slot set to 150 °F also arms a ramp when started from the device itself. |
 | `0xCC` | 16 | *Custom firmware only, beta* — stock / ramp mode switch | Same shape, `marker = 0xBD`, byte 14 `0x53` (`S`, stock mode: the patch becomes a pass-through) or `0x52` (`R`, ramp mode). The only marker the patch acts on in stock mode. Unrecognized on stock firmware (same Carta 2 caveat as the waypoint row). |
-| `0xCC` | 16 | *Custom firmware only, beta* — choose the built-in preset | Same shape, `marker = 0xBE`, preset number in byte 14 (0-5 on the Carta 2, 0-3 on the Aeris and Sport). Unrecognized on stock firmware (same Carta 2 caveat). |
+| `0xCC` | 16 | *Custom firmware only, beta* — choose the built-in preset | Same shape, `marker = 0xBE`, preset number in byte 14 (0-5 on the Carta 2, 0-4 on the Sport, 0-3 on the Aeris). Unrecognized on stock firmware (same Carta 2 caveat). |
+| `0xCC` | 16 | *Custom firmware only, beta* — stay-awake, picker colours | Same shape: `0xBF` with 0 / 1 in byte 14 (idle stay-awake), `0xC0 + preset * 3 + channel` with the RGB value in byte 14 (the picker colour, committed after blue). |
+| `0xCC` | 16 | *Custom firmware only, protocol 7+* — edit a built-in preset | Same shape as a waypoint save, `marker = 0xD2 + preset * 5 + stage` (stage 0 clears the preset's later stages); `0xF0` + preset in byte 14 puts it back to the factory ramp; `0xF1` clears the custom waypoints; `0xF2` (byte 14: a preset, or `0xFF` for all) asks for the presets' stages, reported in `TSTG` packets. Full detail in the patch's [`PROTOCOL.md`](https://github.com/hashking710/focusv-ramp-firmware/blob/main/PROTOCOL.md). |
 | `0xCC` | 16 | *Custom firmware only, beta* — set the built-in preset offset | Same shape, `marker = 0xBB`, with the offset (signed, −10 to +15 °F) in byte 14. Byte 14 is never read by the stock `0xCC` handler on any of the three devices, and the custom slot, durations and preset ranks are written back unchanged. Unrecognized on stock firmware (same Carta 2 caveat as the waypoint row). |
 | `0x77` | 12 | Pre-OTA date/time set (distinct from `0xDD`'s date/time write) | `[77,0C, yearHi,Lo, month, day, hour, minute, 0,0,0, 77]` |
 | `0xDD` | 12 | Set date/time (also triggers a full state-dump response — see Connection flow) | `[DD,0C, yearHi,Lo, month, day, hour, min, 00,00,00, DD]` |
@@ -366,29 +368,78 @@ covered in detail here since modern hardware doesn't use it.
 | `0x44` | — | Preset-table sync, flower, °C |
 | `0x22` | — | Preset-table sync, concentrate, °C |
 | `0xEA`/`0xE9`/`0xE8`/`0xE7`/`0xE6` | len 20 | LED-preset-save acknowledgment, ranks 1-5 — a full echo of the saved preset, not a bare ack |
-| `0xDD` | var | Session-log streaming — `byte[1]` nonzero = raw log chunk; zero = live per-sample telemetry record (see breakdown below) |
+| `0xDD` | var | Encrypted live telemetry / session-log traffic; do not classify by `byte[1]` until captures are reconciled with the device transmit path |
 | `0xCE` | len 7 | Live atomizer resistance — `byte[2-3]` = flower ohms, `byte[4-5]` = concentrate ohms |
 | `0x82` | len 8 | Screensaver settings/status — `byte[2]`/`byte[3]` = current Order/Time settings, `byte[5]`/`byte[6]` = slot 1/slot 2 "has a screensaver saved" flags (0/1), `byte[4]` unmapped |
 | `0xD2` | len 7 | Ack/readback for `0xD1`, same field order (LED timeout, then device timeout) — confirmed to echo exactly what was just sent |
 | `0xC2` | len 8 | Response to `0xCD`/`0xC1` (calibration) — `byte[2]` = success flag, `byte[3-4]`/`byte[5-6]` = flower/concentrate ohms |
 | `0x73` | len 4 | Screensaver transfer session-ready ack (see transfer sequence above) |
-| `0xBC` | len 12 | *Custom firmware only* — announcement, sent after the `0xAA` dab-counter reply and whenever the mode, offset or preset choice changes or a ramp starts or ends: `[BC, 0C, 'T','R','M','P', protocol (3), device (1 Carta 2, 2 Aeris, 3 Sport), flags (bit 0 ramps enabled, bit 1 stock mode, bit 2 ramp running), preset, offset (signed °F), BC]`. Stock firmware never sends it. |
+| `0xBC` | len 12 | *Custom firmware only* — announcement, sent after the `0xAA` dab-counter reply and whenever the mode, offset or preset choice changes or a ramp starts or ends: `[BC, 0C, 'T','R','M','P', protocol (8 now), device (1 Carta 2, 2 Aeris, 3 Sport), flags (bit 0 ramps enabled, bit 1 stock mode, bit 2 ramp running, bit 3 stay-awake, bit 4 custom waypoints saved), preset, offset (signed °F), BC]`. Stock firmware never sends it. |
+| `0xBC` | len 18 | *Custom firmware only, protocol 5+* — picker colours: `[BC, 12, 'T','C','O','L', protocol, firstPreset (0 / 3), RGB x 3, BC]`, after each announcement. |
+| `0xBC` | len 19 | *Custom firmware only, protocol 7+* — a preset's stages, two per packet: `[BC, 13, 'T','S','T','G', protocol, preset, firstStage, count << 4 \| edited, (F, hold) x 2 little-endian, BC]`. |
 
-### `0xDD` per-sample telemetry record (when `byte[1] == 0`)
+### `0xDD` encrypted per-sample telemetry
 
-```
-byte 3-4:   16-bit — NTC (thermistor) temperature, °C native
-byte 5-6:   16-bit — TCR-derived temperature (only meaningful for 'new'/'max' atomizers)
-byte 7-8:   16-bit — live Power Output (raw)
-byte 9-10:  16-bit — live PID "Kt" gain (raw, unscaled)
-byte 11-12: 16-bit ÷100 — live PID "Kp" gain
-byte 13-14: 16-bit ÷100 — live PID "Ki" gain
-byte 15-16: 16-bit ÷100 — live PID "Kd" gain
-```
+`0xDD` carries the real-time PID/temperature telemetry described in
+[Firmware Architecture § AES-128 telemetry encryption](firmware-architecture.md#aes-128-telemetry-encryption).
+The firmware encrypts the telemetry structure with its on-chip AES-128 engine before notifying
+the client. The previously listed byte offsets (reached flag, temperatures, power, PID terms)
+were treated as plaintext wire offsets without accounting for this encryption and are therefore
+not validly established offsets. Ghidra's Carta 2 `PROD-111224` telemetry builder establishes a 16-byte AES input/output block.
+It builds a 20-byte frame with `0xDD`, `0x01`, a state byte, the encrypted 16-byte block, and a
+trailing zero; its helper passes that frame to device transport. A Carta Sport Web Bluetooth
+capture on 2026-10-11 showed that Sport's corresponding 20-byte frame is exposed directly as the
+GATT notification, with no extra bytes or fragmentation observed:
+`dd 01 00 <16 ciphertext bytes> 00` (62 packets). In this observed Sport stream, byte 1 was always
+`0x01`; do not use it to infer a telemetry subtype.
 
-This is a real-time telemetry stream, not a one-shot summary — it fires repeatedly throughout a
-session. Whether the device is running closed-loop PID at all is itself reported: 'old'
-(legacy) atomizers run without PID or TCR sensing at all ("Legacy Mode").
+Sport's Ghidra builder maps plaintext bytes 0–1 to measured whole °C. Bytes 2–3 hold the current
+target in whole °C only when the frame state byte is `1`; they are explicitly zero when state is
+`0` (other states are not established). Bytes 4–5 are a bounded heater-output/control quantity
+(scale unresolved). Byte 7 is an unresolved controller byte; bytes 8–13 are PID gains
+`00 c7 00 03 00 02` (P/I/D), and bytes 6, 14, and 15 are zero. All 62 captured Sport frames have
+state `0`, so bytes 2–3 should decrypt to zero. The gain bytes provide a known-plaintext check.
+Applying standard
+AES-128-ECB decryption with the candidate Sport key to the 62 captured blocks did not produce
+those bytes in any frame; the Carta 2 candidate key failed too. Thus the frame layout is confirmed,
+and this is a **Carta Sport** running the March 2026 Sport firmware, per the user's confirmation
+and consistent with the open Ghidra program and stock `PROD-030426` image. `Carta 2 (Quantum)` was
+simply selected by mistake in the capture metadata: Quantum is the internal type/name for Carta 2,
+not Carta Sport. The manually entered build label agrees with the user's confirmation but was not
+independently read from Device Information. The AES helper clears the codec-trigger bit (the
+Telink driver uses clear for encryption and set for
+decryption). Testing both AES directions and five plausible per-word byte/word-order transforms for
+the key, block, and output still produced no known-gain match across 15,500 cases. The Ghidra builder
+and observed GATT frame agree on the ciphertext block boundary; the effective runtime key or another
+hardware/configuration detail remains unresolved. Keep `0xDD` opaque until runtime plaintext and
+effective key bytes validate the decoder.
+
+Carta 2 and Sport key material has been located in firmware images, but neither candidate key
+currently validates against the captured Sport known-plaintext invariant; this repository does
+not contain a validated client-side decryptor. Do **not**
+interpret notification bytes as plaintext. In particular, byte values that look like a reached
+flag or plausible temperatures are not evidence of decoded data.
+
+This does not mean the stock firmware cannot read temperature: it must measure the PT1000, feed the
+value into its PID/control loop, and render the measured temperature on the device screen. The
+unresolved issue is host-side decoding of the encrypted `0xDD` notification, not the device's
+internal sensor reading or display. For the Carta 2 and Sport, the firmware research separately
+traces the live-heating display to show that measured value.
+
+For immediately usable measured-temperature samples, use the readable `0x99` status notify
+(`byte[6-7]`, device display units). It is lower-rate than the encrypted telemetry stream and
+does not expose PID output or the device-native ramp's interpolated setpoint. The research
+controller exports active-session `0x99` samples as a CSV to support synchronized hardware
+testing. To collect both streams in one file, open `tools/ble-tester.html`, connect to the device
+(the model is auto-selected from recognizable advertising names such as `CARTA SPORT`), fill in
+the build and session details, start recording, then use the device's physical
+controls to run a normal session. Add markers for observed session/target changes and stop the
+recording before exporting the full JSON and packet/temperature CSV. The JSON preserves raw bytes
+for every notification and tester write with UTC and elapsed timestamps; its `0xDD` payload is
+deliberately opaque. Only the documented 20-byte `0x99` status shape has its measured-temperature
+bytes labeled. Any entered firmware build is explicitly marked as manual and unverified; it is not
+read from the device. This page creates a GATT client connection and cannot passively capture traffic
+between the official app and the device at the same time; use a BLE sniffer for that.
 
 ## Confirmed temperature/duration limits, per device and mode
 

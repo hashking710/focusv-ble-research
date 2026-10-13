@@ -60,16 +60,22 @@ firmware image in the first place*:
 | **Nuvoton M031TD2AE** (Arm Cortex-M0, 64KB flash, 12× 16-bit PWM channels) | A second, independently-programmable MCU on the same board. Not yet dumped or analyzed — different vendor toolchain entirely (standard Arm, not Telink TC32). **Not the heater driver** — that's now confirmed to run on the TLSR8258 itself (see [Where the heater output is driven](#where-the-heater-output-is-driven) below), which was this chip's leading candidate role. Its actual job is still open. |
 | **SouthChip SC8922A** | A 2-3 cell Li-ion boost battery charger IC. Fixed-function analog/mixed-signal silicon — no firmware, not a candidate for anything BLE- or update-related. |
 
-**TLSR8258 pin assignment** — the real part marking (`TLSR8258 F1KET48`) matches Telink's own
-`TLSR8258F512ET48` datasheet variant exactly (F512 = 512KB flash, ET48 = QFN48 package), so its
-published pin diagram applies directly to this exact board, not just the chip family in general:
+**TLSR8258 pin assignment** — the physical marking reads `TLSR8258 F1KET48`. The QFN48 package
+correlates with the pin diagram below, but the mapping from this marking to Telink's
+`TLSR8258F512ET48` datasheet variant has not been confirmed against an authoritative part-number
+reference. In particular, do not infer the board's flash capacity from that proposed mapping:
+the traced stock firmware references addresses through `0xFF000`, and the physical target flash
+identity/capacity has not been read. The diagram is a pinout lead, not confirmation of the
+installed flash's capacity or addressability:
 
 <p align="center"><img src="../assets/chips/tlsr8258-pinout.png" width="520" alt="TLSR8258F512ET48 QFN48 pin assignment"></p>
 
-This resolves the SWire pad location flagged as unknown in
+This narrows the SWire pad location flagged as unknown in
 [Hardware Setup § Part 3](hardware-setup.md#part-3-tlsr8258-swire-recovery-tooling) — see that
 section for the photo-correlated physical pin location and why it still needs a continuity-test
-confirmation before being trusted blind.
+confirmation before being trusted blind. The firmware-derived memory map also does not prove that
+the physical flash has the capacity assumed by those addresses; confirm its identity/capacity and
+the store sectors on each target before relying on them.
 
 **Correction (superseded by a newer firmware build's analysis):** this section previously named
 the M031 as the leading candidate for driving the heating element, on the reasoning that an
@@ -235,8 +241,8 @@ Any firmware modification should leave this path untouched.
 
 ## AES-128 telemetry encryption
 
-The `0xDD` telemetry notify (measured temperature, power output, controller-state byte, and the
-three PID terms — the data behind the official app's hidden "Real-Time Results" dialog) **is
+The `0xDD` telemetry notify (measured temperature, a bounded controller output, controller state,
+and PID-related values — the data behind the official app's hidden "Real-Time Results" dialog) **is
 AES-128-encrypted before transmission, on all three devices**. Confirmed via a clean decompile of
 each device's engine-invoke function, which resolves the hardware AES block's three arguments
 unambiguously: a key (copied into a fixed MMIO key-load window), the plaintext telemetry struct,
@@ -250,7 +256,87 @@ already-present calibration data as a de-facto key rather than allocating a dedi
 secret. Reads as obscuring the raw telemetry from casual BLE sniffing (hence "hidden" in the
 official app), not a real security boundary — consistent with there being no authentication,
 rotation, or per-session key derivation anywhere in this path. Carta 2's and Sport's extracted keys
-are confirmed different from each other.
+are confirmed different from each other. For Carta 2 `PROD-111224`, the stock OTA file's key
+bytes are at raw file offset `0x230b0` (strip the 40-byte OTA header to get Ghidra offset
+`0x23088`); the boot `.data` copy maps that source to runtime RAM `0x844964`. The catalog stock
+image SHA-256 is
+`3c496ecb649f28546bc60a240ee219625b61f37480f01d2db112164df2dcb331`.
+
+**Sport `PROD-030426`, verified through the running Ghidra MCP:** the matching stock OTA file
+SHA-256 is `3801dbe7b15c2b3532a92f1e74963619ae8e328104d439965d73fc34926804cc`. The Sport key is
+at raw file offset `0x162bc` (Ghidra stripped-image offset `0x16294`), copied to runtime RAM
+`0x843dbc`; the bytes are `b7 1f 5a 00 26 20 69 00 02 00 28 23 01 00 00 00`. Its telemetry
+builder `0x7c00` calls AES engine `0xbf90` at `0x7e9c`, with key `0x843dbc`, plaintext staging
+buffer `0x844744`, and ciphertext output buffer `0x84475c`. Like Carta 2, it passes a 16-byte
+block through MMIO control `0x800540`, key window `0x800550`, and data port `0x800548`.
+
+The Sport builder assembles a 20-byte frame,
+`[0xdd, 0x01, state, ciphertext(16), 0x00]`, and passes it to transport wrapper `0xec3c` with
+length `0x14`. A 2026-10-11 Web Bluetooth capture from a device named `CARTA SPORT` produced 62
+20-byte notifications with exactly that layout and no added outer bytes or fragmentation observed.
+This confirms the GATT-visible frame shape for the captured session; it does not establish the
+installed firmware build because the capture's build label was manually entered.
+
+The Sport builder's plaintext fields are traceable. Block bytes 0–1 are measured temperature in
+whole °C. Bytes 2–3 are the current target in whole °C only when the frame state byte is `1`; the
+builder explicitly writes zero there when state is `0` (other state values are not established).
+Bytes 4–5 are a bounded heater-output/control quantity before PWM conversion (scale not resolved).
+Byte 6 is zero; byte 7 is an auxiliary controller byte with unresolved meaning. Bytes 8–13 are
+three PID gain fields initialized by `FUN_00006970` to `00 c7`, `00 03`, and `00 02` (proportional,
+integral, derivative); bytes 14–15 are zero. These are gain constants, not live PID contribution
+values. All 62 captured Sport `0xDD` frames have state `0`, so target bytes 2–3 should decrypt to
+zero, not to the session's 435°F target.
+
+**Decryption remains unresolved despite the captured frame.** Standard AES-128-ECB decryption
+using the `PROD-030426` candidate Sport key did not produce the known gain bytes
+`00 c7 00 03 00 02` at plaintext block offsets 8–13 for any of the 62 captured frames. The
+Carta 2 candidate key also failed this invariant. This capture is from a **Carta Sport** running the
+March 2026 Sport firmware, per the user's confirmation and consistent with the open Ghidra program
+and stock `PROD-030426` image. Its `Carta 2 (Quantum)` model-selector value was simply selected
+incorrectly: Quantum is the internal type/name for Carta 2, not Carta Sport. The manually entered
+build label agrees with the user's confirmation but was not independently read from Device
+Information. The Ghidra helper clears bit 0 of the AES control register before feeding key and data
+words. The local
+TLSR8258 register header labels bit 0 as the codec trigger, not an encrypt/decrypt mode bit; a
+corresponding Telink AES driver clears it for encryption and sets it for decryption. Both
+directions, plus five plausible per-word byte/word-order transforms for key, block, and result,
+were checked against all 62 frames (15,500 frame/direction/permutation cases) without a match.
+The invariant check includes 11 known plaintext bytes: target bytes 2–3 are zero for the captured
+state-0 frames, byte 6 is zero, gain bytes 8–13 are fixed, and bytes 14–15 are zero.
+Thus the capture/image association is no longer the leading uncertainty, but the effective runtime
+key or another hardware/configuration detail remains unresolved. The Ghidra builder and observed
+GATT frame agree on the 16-byte ciphertext boundary. Keep `0xDD` opaque until runtime plaintext
+and effective key bytes validate the decoder.
+
+This is a **client-side decoding limitation**, not a firmware sensor limitation: the stock firmware
+must read the PT1000, convert its measurement, use it in the control loop, and render it on the
+device's live-heating display. Ghidra traces Sport's measured value into the plaintext staging block
+before AES; Carta 2's live-heating screen is separately traced to draw the measured temperature.
+The readable `0x99` status notification also carries measured temperature. None of that establishes
+that a host can currently decrypt the Sport `0xDD` ciphertext with the candidate key.
+
+**Carta 2 call path, verified through the running Ghidra MCP:** telemetry builder `0x0af2c`
+calls the AES engine at `0x12e00` from `0x0b3c2`. Ghidra's literal pool resolves the engine
+arguments to key `0x844964`, plaintext staging buffer `0x8452e8`, and ciphertext output buffer
+`0x845308`. The builder copies a 16-byte block from its inner frame into the plaintext buffer,
+invokes AES, then copies the 16-byte ciphertext back. It constructs an inner 20-byte frame as
+`[0xdd, 0x01, state, ciphertext(16), 0x00]`; the transport helper wraps that frame before queueing
+it. This directly disproves the earlier `byte[1] == 0` live-telemetry assumption. The Sport live
+capture validates Sport framing only; Carta 2 still needs its own capture to confirm its transport
+boundary.
+
+Key extraction alone is not a usable telemetry decoder. Sport's on-wire frame mapping is confirmed,
+but the candidate key fails the known PID-gain invariant; verify the installed image/key association
+or obtain a runtime known-plaintext pair before implementing a decoder.
+
+**Important client-side correction:** the presumed plaintext telemetry fields previously
+documented in [BLE Protocol](ble-protocol.md#0xdd-encrypted-per-sample-telemetry) are not sent as
+those raw field bytes. A prior parser in the research controller and Terpline web client treated
+the ciphertext as plaintext; those displayed temperature, PID, and reached-state values were
+unverified and should not be used for controller analysis. The research controller now
+plots/exports only the readable measured temperature from the `0x99` status notify until a real
+decryptor is independently validated. This does not imply `0x99` is high-rate enough to diagnose
+every controller transient.
 
 The Aeris key could **not** be extracted the same way, and the reason is itself a confirmed,
 interesting finding rather than a gap: the boot-time flash→RAM `.data` copy loop's declared range,
@@ -451,8 +537,10 @@ a client to send a series of timed `0xCC` writes (see [`tools/focusv-controller.
 Ramp tab). A patch adds a genuine device-native ramp instead: waypoints saved once to flash, then
 run autonomously by the firmware's own tick loop with no client connected. **The patch exists
 for all three devices (Carta 2, Aeris, Carta Sport), built and verified in software (address
-traces, host tests, a Carta 2 screen test) but not yet run on hardware** -- the source, patch
-bytes, per-device build fingerprints, the protocol ([`PROTOCOL.md`](https://github.com/hashking710/focusv-ramp-firmware/blob/main/PROTOCOL.md))
+traces, host tests, a Carta 2 screen test). A user reported one completed ramp on an earlier
+patched Aeris image; the current rebuilt images have not been hardware-validated, and patched
+Carta 2/Sport operation remains unverified -- the source, patch bytes, per-device build
+fingerprints, the protocol ([`PROTOCOL.md`](https://github.com/hashking710/focusv-ramp-firmware/blob/main/PROTOCOL.md))
 and the verification ledger ([`VERIFICATION.md`](https://github.com/hashking710/focusv-ramp-firmware/blob/main/VERIFICATION.md))
 live in the companion [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware)
 repo. What follows is the architecture in brief; that repo is the reference (see its `LEGAL.md`
@@ -461,37 +549,40 @@ for why the split exists).
 **Mechanism, same shape across all three devices:**
 
 - **Commands ride on the stock `0xCC` packet**, which stock parses before the patch sees it (the
-  patch hooks the marker-byte load, byte 13): `0xB1`-`0xBA` save flower / concentrate stages 1-5
-  from the packet's custom values, `0xBB` sets the setup offset, `0xBD` switches stock / ramp mode,
-  `0xBE` chooses the built-in preset, and the stock start `0xA5` with `0x52` in byte 14 asks for that
-  session to run as a ramp. Stock reads bytes 2-13 only (checked by resolving every register-indexed
-  load in each handler), so byte 14 is free.
-- **A ramp runs inside a stock session.** Each stage writes the active preset slot (both units) and
-  clears "reached", the way stock changes temperature mid-session; the stock heat-up, PID and
-  safety limits stay in charge. The session countdown is the ramp's clock, and every hold is time
-  at temperature (all three stock clocks wait for "reached"). The slot is put back at the end.
-- **Starting.** From an app: the `0xA5` request above, on whatever preset is active. From the
-  device: a session on a preset slot holding the trigger (150 °F, or 65 / 66 °C).
+  patch hooks the marker-byte load, byte 13): `0xB6`-`0xBA` save concentrate waypoints 1-5 from the
+  packet's custom values, `0xBB` sets the setup offset, `0xBD` switches Terpline / Focus V mode,
+  `0xBE` chooses the built-in preset, `0xBF` stay-awake, `0xC0`-`0xD1` picker colours, `0xD2`-`0xF2`
+  edit / reset / report the built-in presets (protocol 7), and the stock start `0xA5` with `0x52`
+  in byte 14 asks for that session to run as a ramp. Stock reads bytes 2-13 only (checked by
+  resolving every register-indexed load in each handler), so byte 14 is free.
+- **A ramp runs inside a stock session.** The live controller target is interpolated between
+  waypoints on all three models. Each non-final duration is the interval to the next waypoint; the
+  final duration is a hold at the last target. Intervals are extended as needed to limit planned
+  target movement to 2°F/s (1°C/s), and ramp time pauses when measured temperature is more than 5°F
+  from the requested target. It resumes on recovery or after 120 seconds outside the band for a
+  stage. The slot keeps the first waypoint and the interpolated target is written after the stock
+  controller tick; stock heat-up, PID and safety limits stay in charge, and the original slot is
+  restored at the end. These changes shape the requested setpoint, not measured-temperature
+  stability.
+- **Two modes.** Terpline mode heats only ramps (anything that can't ramp is stopped); Focus V mode
+  is stock, with the Terpline ramps still reachable on the device.
+- **Built-in presets.** Six concentrate ramps (four on the Aeris, five on the Sport), each editable
+  from an app since protocol 7 and reported back; a factory one is shifted by the setup offset.
 - **The store** lives outside both OTA banks (stock wipes the bank it isn't running from at every
   boot), as two copies with a commit byte written last, so a power cut never loses it.
 - **Detection.** The patch wraps the stock send of the `0xAA` dab-counter reply (Carta 2 `0x11562`,
-  Aeris `0xb066`, Sport `0xa9ea`) and queues an `0xBC` announcement (protocol, device, flags --
-  ramps enabled, stock mode, a ramp running -- preset, offset), also sent on every change and when a
-  ramp starts or ends. The notify routines (`0x15a34` / `0xe734` / `0xec3c`) are the SDK's
-  `bls_att_pushNotifyData` (handle 27).
+  Aeris `0xb066`, Sport `0xa9ea`) and queues an `0xBC` announcement (protocol 8 now; flags, preset,
+  offset), then the colour and preset reports. The notify routines (`0x15a34` / `0xe734` /
+  `0xec3c`) are the SDK's `bls_att_pushNotifyData` (handle 27).
 
-**Stock mode and the device gestures.** Stock mode (`0xBD`) turns every hook into a pass-through.
-It's also switched on the devices themselves: on the Carta 2 at power-on (hold − while pressing the
-power button five times for ramp mode, + for stock mode -- stock ignores the main button while
-another is down, so the patch counts those presses from the pins), on the Aeris and Sport with five
-presses and the fifth held (a hold with the press count at 5, unused in stock).
-
-**Built-in presets and the picker.** Concentrate mode ships six built-in ramps (`common/ramp_presets.c`),
-shifted by the setup offset and clamped to 440-520 °F; uploaded stages take precedence. On the Aeris
-and Sport a hold from idle (a single press, LEDs on) opens a picker: clicks step through four
-presets on the LEDs and the button light, a triple click switches the ramp system on or off, a hold
-leaves. The Carta 2 has no picker -- every idle gesture already has a stock meaning -- and its
-preset is chosen from an app (`0xBE`).
+**The device gestures.** Carta 2: four clicks on the idle live view switch the mode (they replace
+stock's device lock: no button event can lock it any more, and a lock already set still unlocks with
+four clicks); a long hold opens the preset strip; holding − or + while pressing power five times
+powers on in Terpline / Focus V mode (stock ignores the main button while another is down, so the
+patch counts those presses from the pins), and the held button's events and its release are taken so
+no editor opens; a press that wakes the screensaver only wakes it. Aeris and Sport: a click opens the
+picker on the LEDs, a double-click runs the ramp shown, five presses with the fifth held switch the
+mode, and two presses + a hold from off powers on into a ramp (Terpline mode).
 
 **What a patch command does on stock firmware.** Aeris and Sport: it resets the keep-awake counter
 (`0xFA` into `+0x40`) and exits. Carta 2, on the live screen: any marker other than `0x66` runs the
@@ -499,13 +590,13 @@ same post-command housekeeping a start or stop does (`0x11dc2`: `0x10c98` clamps
 the device limits and re-syncs them, `0x10b38` re-applies settings, view 15 is drawn). A stage save
 also writes the custom preset, as any `0xCC` packet does.
 
-**Screen and LEDs.** The Carta 2 draws a ramp screen (chart, meter, dab count, the Terpline logo
-streamed through the stock LCD driver) from hooks on its view functions, only while a ramp runs,
-and repaints the full stock view when it ends. The Aeris and Sport show progress and temperature on
-their LEDs and the control button's light (Aeris: an RGB LED on PB5-PB7, software PWM `0x49c`, duty
-`0x845602` / `0x8455fc` / `0x8455fe`; Sport: one more addressable LED sent by `0x8efc`), from a wrap
-of the single call to each LED effect dispatcher (Aeris `0x920c` at `0x61ae`, Sport `0x8ff8` at
-`0x57ee`).
+**Screen and LEDs.** The Carta 2 draws its Terpline screen (chart, meter, dab count, the Terpline
+logo streamed through the stock LCD driver) on the unlocked live view while idle and during a ramp,
+and repaints the full stock view when it returns to stock mode or a ramp ends. The Aeris and Sport
+show progress and temperature on their LEDs and the control button's light (Aeris: an RGB LED on
+PB5-PB7, software PWM `0x49c`, duty `0x845602` / `0x8455fc` / `0x8455fe`; Sport: one more
+addressable LED sent by `0x8efc`), from a wrap of the single call to each LED effect dispatcher
+(Aeris `0x920c` at `0x61ae`, Sport `0x8ff8` at `0x57ee`).
 
 **A real mistake, caught before it shipped, worth recording precisely rather than smoothing over**:
 an earlier pass through this same work identified the Carta 2 orchestrator as `FUN_0000ad4c`,

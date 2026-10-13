@@ -46,6 +46,13 @@ against these exact gaps rather than "more reverse engineering in general."
   lives at a different address than both other devices'). Full details in
   [Firmware Architecture § Custom firmware: device-native hardware ramp](firmware-architecture.md#custom-firmware-device-native-hardware-ramp)
   and in the patch repo itself, [focusv-ramp-firmware](https://github.com/hashking710/focusv-ramp-firmware).
+- **Abrupt ramp setpoints and the chart/controller mismatch.** The patch now interpolates the live
+  controller target between waypoints on Carta 2, Aeris and Sport, extends intervals when needed
+  to cap planned target movement at 2°F/s (1°C/s), and pauses schedule progress outside a 5°F
+  measured-to-target band (with a 120-second per-stage timeout). The stock PID and heater-output
+  paths remain unchanged. Host tests and all three TC32 builds pass, but whether the change reduces
+  measured-temperature oscillation is still a hardware-only question; the latest patched images
+  have not been tested on devices.
 - **A second, different-shaped gap in the Carta 2 ramp patch, caught in a later audit before any
   hardware testing happened.** The shipped 5-site version never suppressed two screen elements
   (`FUN_0000dcac`, `FUN_0000e300`) that the real live-heating refresh routine calls unconditionally
@@ -96,6 +103,24 @@ against these exact gaps rather than "more reverse engineering in general."
 
 ## Firmware
 
+- **Resolve Sport `0xDD` decryption despite the confirmed March 2026 image.** A live `CARTA SPORT`
+  capture confirms the 20-byte GATT frame shape. The device is a Carta Sport running the March 2026
+  Sport revision, per the user's confirmation and consistent with open Ghidra `PROD-030426`; the
+  capture's Carta 2 (Quantum) selector was simply selected by mistake. Its plaintext layout exposes
+  fixed PID gains (`00 c7 00 03 00 02`), but neither AES direction nor five plausible
+  key/block/output word-order transforms matched those bytes across the 62 captured packets
+  (15,500 tested cases). Obtain runtime plaintext and effective key bytes to explain the remaining
+  decryption mismatch. Carta 2 still needs its own GATT-framing capture. Aeris needs live key
+  recovery because its bytes are in the provisioned calibration tail absent from the OTA image.
+  Carta 2 still needs its own GATT-framing capture. Aeris needs live key recovery because its bytes
+  are in the provisioned calibration tail absent from the OTA image.
+- 🔬 **Physical flash identity, capacity, and ramp-store behavior.** The current stock images'
+  traced maps reference addresses through `0xFF000`, and Carta 2's proposed identification as an
+  `F512` variant would imply a capacity mismatch if that suffix describes the installed flash.
+  The part-marking-to-datasheet mapping may be wrong, or the target flash may be separate; neither
+  possibility is confirmed here. Read the actual flash identity/capacity and verify the chosen
+  store sectors can be read, erased, programmed, read back, and retained across reboot on each
+  device. Static address traces alone do not establish physical addressability.
 - 🔬 **What the Nuvoton M031 actually does.** Open again now that the heater-driver theory above
   is retired — the TLSR8258 side has nothing else obviously missing a destination, so there's no
   current firmware-level lead pointing at a specific job for this chip. Needs its own flash dump

@@ -62,6 +62,8 @@
     padding: 8px 10px; font-size: 11px; margin-bottom: 14px; line-height: 1.5;
   }
   .hint { color: var(--muted); font-size: 11px; line-height: 1.5; margin-top: 4px; }
+  .capture-active { color: var(--ok); font-weight: 600; }
+  .capture-counts { margin: 6px 0; }
   a { color: var(--accent); }
 </style>
 </head>
@@ -104,6 +106,66 @@
       <button id="btnReadInfo" disabled>Read model / serial / revisions</button>
       <button id="btnReadBattery" disabled>Read battery level</button>
       <div class="kv" id="readOut"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Raw telemetry capture</legend>
+      <div class="hint">Connect here, start recording, then use the device's physical controls
+        to run a normal session. This page records notifications from this connection; it cannot
+        capture traffic between the official app and the device at the same time.</div>
+      <label>Device model</label>
+      <select id="captureModel">
+        <option value="Unknown" selected>Unknown / not sure</option>
+        <option value="Carta 2 (Quantum)">Carta 2 (Quantum)</option>
+        <option value="Carta Sport">Carta Sport</option>
+        <option value="Aeris">Aeris</option>
+      </select>
+      <div class="hint">Auto-selected from a recognizable Bluetooth device name when possible.
+        Firmware build is a manual note, not read from the device.</div>
+      <label>Firmware build (if known)</label>
+      <input type="text" id="captureBuild" placeholder="e.g. PROD-030426 or Terpline build">
+      <div class="row">
+        <div style="flex:1">
+          <label>Session mode</label>
+          <select id="captureMode">
+            <option value="unknown">Unknown</option>
+            <option value="flower">Flower</option>
+            <option value="concentrate">Concentrate</option>
+          </select>
+        </div>
+        <div style="flex:1">
+          <label>Target temperature</label>
+          <input type="number" id="captureTarget" min="0" max="1000" placeholder="optional">
+        </div>
+        <div style="width:70px">
+          <label>Unit</label>
+          <select id="captureUnit">
+            <option value="F">°F</option>
+            <option value="C">°C</option>
+          </select>
+        </div>
+      </div>
+      <label>Atomizer / setup</label>
+      <input type="text" id="captureAtomizer" placeholder="e.g. stock atomizer, water level, other setup">
+      <label>Notes</label>
+      <input type="text" id="captureNotes" placeholder="Optional test conditions">
+      <div class="row">
+        <button class="primary" id="btnCaptureStart" disabled>Start recording</button>
+        <button class="danger" id="btnCaptureStop" disabled>Stop</button>
+      </div>
+      <label>Event marker (optional note, e.g. “heater started” or “target changed to 480°F”)</label>
+      <div class="row">
+        <input type="text" id="captureMarker" placeholder="Describe an observed event" style="flex:1">
+        <button id="btnCaptureMark" disabled>Add marker</button>
+      </div>
+      <div class="kv capture-counts" id="captureStatus">Not recording. No capture yet.</div>
+      <button id="btnCaptureJson" disabled>Export full capture (.json)</button>
+      <button id="btnCaptureCsv" disabled>Export packet / temperature CSV</button>
+      <div class="hint">Capture stays in memory until exported, so download it before closing or
+        reloading this page. Every notification and tester command during recording is retained as raw
+        bytes. 0xDD remains opaque; only the documented 20-byte 0x99 status shape gets its
+        measured-temperature bytes labeled. The CSV includes the entered setup metadata; keep the
+        JSON as the source capture.</div>
     </fieldset>
 
     <fieldset>
@@ -154,6 +216,9 @@ const WRITE_CHAR = '1011123e-8535-b5a0-7140-a304d2495cb9';
 const OTA_SERVICE = '00010203-0405-0607-0809-0a0b0c0d1912';
 
 let device = null, server = null, service = null, readChar = null, writeChar = null;
+let captureSession = null;
+let captureModelSource = 'unknown';
+let captureModelManuallySelected = false;
 
 const $ = id => document.getElementById(id);
 const dot = $('dot'), statusText = $('statusText'), deviceInfo = $('deviceInfo');
@@ -161,6 +226,9 @@ const btnConnect = $('btnConnect'), btnDisconnect = $('btnDisconnect');
 const btnReadInfo = $('btnReadInfo'), btnReadBattery = $('btnReadBattery');
 const btnSend = $('btnSend'), rawBytes = $('rawBytes'), quickFill = $('quickFill');
 const logEl = $('log');
+const btnCaptureStart = $('btnCaptureStart'), btnCaptureStop = $('btnCaptureStop');
+const btnCaptureMark = $('btnCaptureMark'), btnCaptureJson = $('btnCaptureJson');
+const btnCaptureCsv = $('btnCaptureCsv');
 
 if (!navigator.bluetooth) {
   statusText.textContent = 'navigator.bluetooth unavailable — use desktop Chrome/Edge or Android Chrome';
@@ -247,7 +315,7 @@ function decode(bytes, dir) {
     if (op === 0x82 && n.length === 8 && last === 0x82) {
       return `Screensaver readback (0x82) — values: ${n[2]},${n[3]},${n[4]},${n[5]},${n[6]} (roles unresolved, checklist #16)`;
     }
-    if (op === 0xDD) return 'Session log (sl) — chunk if byte[1]!=0, else summary record';
+    if (op === 0xDD) return 'Encrypted telemetry — raw bytes only; do not classify by byte[1]';
     if (op === 0xDF && n[3] === 0xDF) return 'cl() — unconfirmed';
     if (op === 0xCE && n.length === 7 && last === 0xCE) {
       const flowerOhms = 256*n[2]+n[3], concOhms = 256*n[4]+n[5];
@@ -273,18 +341,220 @@ function decode(bytes, dir) {
   }
 }
 
-function log(dir, bytes) {
-  const t = new Date().toLocaleTimeString([], { hour12: false }) + '.' + String(new Date().getMilliseconds()).padStart(3, '0');
+function log(dir, bytes, writeSucceeded = null, writeError = null) {
+  const t = new Date().toISOString();
   const h = hex(bytes);
   const a = ascii(bytes);
   const d = decode(bytes, dir);
   const div = document.createElement('div');
   div.className = 'entry';
-  div.innerHTML = `<span class="t">${t}</span> <span class="dir-${dir}">${dir}</span> ` +
-    `<span class="hex">${h}</span>  <span style="color:#555">"${a}"</span><br>` +
-    `<span class="decoded">→ ${d}</span>`;
+  const timestamp = document.createElement('span');
+  timestamp.className = 't';
+  timestamp.textContent = t;
+  const direction = document.createElement('span');
+  direction.className = `dir-${dir}`;
+  direction.textContent = ` ${dir} `;
+  const packet = document.createElement('span');
+  packet.className = 'hex';
+  packet.textContent = h;
+  const printable = document.createElement('span');
+  printable.style.color = '#555';
+  printable.textContent = ` "${a}"`;
+  const decoded = document.createElement('span');
+  decoded.className = 'decoded';
+  decoded.textContent = `→ ${d}`;
+  div.append(timestamp, direction, packet, printable, document.createElement('br'), decoded);
   logEl.appendChild(div);
   logEl.scrollTop = logEl.scrollHeight;
+  recordCapturePacket(dir, bytes, writeSucceeded, writeError);
+}
+
+function captureElapsedMs() {
+  return Math.round(performance.now() - captureSession.startedMonotonicMs);
+}
+
+function updateCaptureUi() {
+  const recording = !!captureSession?.recording;
+  btnCaptureStart.disabled = !device?.gatt?.connected || recording;
+  btnCaptureStop.disabled = !recording;
+  btnCaptureMark.disabled = !recording;
+  btnCaptureJson.disabled = !captureSession;
+  btnCaptureCsv.disabled = !captureSession;
+
+  if (!captureSession) {
+    $('captureStatus').textContent = 'Not recording. No capture yet.';
+    return;
+  }
+
+  const packets = captureSession.events.filter(event => event.event_type === 'packet');
+  const rx = packets.filter(event => event.direction === 'RX');
+  const dd = rx.filter(event => event.opcode === 0xDD).length;
+  const status = rx.filter(event => event.status_temperature_raw !== undefined).length;
+  const state = recording ? 'Recording' : `Stopped at ${captureSession.ended_at_utc || 'not yet stopped'}`;
+  $('captureStatus').textContent =
+    `${state} — ${packets.length} packets (${rx.length} RX), ${dd} raw 0xDD, ${status} decoded-shape 0x99 samples.`;
+  $('captureStatus').classList.toggle('capture-active', recording);
+}
+
+function appendCaptureEvent(event) {
+  if (!captureSession?.recording) return;
+  captureSession.events.push({
+    timestamp_utc: new Date().toISOString(),
+    elapsed_ms: captureElapsedMs(),
+    ...event,
+  });
+  updateCaptureUi();
+}
+
+function recordCapturePacket(direction, bytes, writeSucceeded, writeError) {
+  if (!captureSession?.recording) return;
+  const values = Array.from(bytes);
+  const event = {
+    event_type: 'packet',
+    direction,
+    byte_length: values.length,
+    opcode: values.length ? values[0] : null,
+    raw_hex: hex(values),
+    raw_bytes: values,
+  };
+  if (direction === 'TX') {
+    event.write_succeeded = writeSucceeded;
+    if (writeError) event.write_error = writeError;
+  }
+  if (direction === 'RX' && values[0] === 0x99 && values.length === 20 &&
+      (values[3] === 0x11 || values[3] === 0x22) && values[19] === 0x99) {
+    event.status_temperature_raw = 256 * values[6] + values[7];
+    event.temperature_unit = values[3] === 0x11 ? 'F' : 'C';
+    event.session_active = values[5] > 0;
+  }
+  appendCaptureEvent(event);
+}
+
+function startCapture() {
+  if (!device?.gatt?.connected) return;
+  if (captureSession && !confirm('Starting a new recording will replace the current in-memory capture. Export it first if you need to keep it.')) {
+    return;
+  }
+  const target = $('captureTarget').value;
+  captureSession = {
+    schema: 'focusv-ble-raw-capture-v1',
+    started_at_utc: new Date().toISOString(),
+    startedMonotonicMs: performance.now(),
+    ended_at_utc: null,
+    recording: true,
+    metadata: {
+      device_model: $('captureModel').value,
+      device_model_source: captureModelSource,
+      device_name: device.name || null,
+      firmware_build: $('captureBuild').value.trim() || null,
+      firmware_build_source: $('captureBuild').value.trim() ? 'manual_entry_not_device_verified' : null,
+      session_mode: $('captureMode').value,
+      target_temperature: target === '' ? null : Number(target),
+      target_temperature_unit: $('captureUnit').value,
+      atomizer_setup: $('captureAtomizer').value.trim() || null,
+      notes: $('captureNotes').value.trim() || null,
+      capture_method: 'Web Bluetooth notification subscription; not a passive over-the-air capture',
+    },
+    events: [],
+  };
+  appendCaptureEvent({ event_type: 'marker', label: 'Recording started' });
+  updateCaptureUi();
+}
+
+function stopCapture(reason = 'Recording stopped') {
+  if (!captureSession?.recording) return;
+  appendCaptureEvent({ event_type: 'marker', label: reason });
+  captureSession.recording = false;
+  captureSession.ended_at_utc = new Date().toISOString();
+  updateCaptureUi();
+}
+
+function addCaptureMarker() {
+  const label = $('captureMarker').value.trim();
+  if (!label) {
+    alert('Enter a short description of the observed event first.');
+    return;
+  }
+  appendCaptureEvent({
+    event_type: 'marker',
+    label,
+    target_temperature: $('captureTarget').value === '' ? null : Number($('captureTarget').value),
+    target_temperature_unit: $('captureUnit').value,
+    session_mode: $('captureMode').value,
+  });
+  $('captureMarker').value = '';
+}
+
+function captureFilename(extension) {
+  return `focusv-ble-capture-${Date.now()}.${extension}`;
+}
+
+function downloadCapture(contents, mimeType, extension) {
+  const blob = new Blob([contents], { type: mimeType });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = captureFilename(extension);
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function exportCaptureJson() {
+  if (!captureSession) return;
+  const { startedMonotonicMs, recording, ...capture } = captureSession;
+  downloadCapture(JSON.stringify({
+    ...capture,
+    recording,
+    ended_at_utc: capture.ended_at_utc || new Date().toISOString(),
+    notes: {
+      dd: '0xDD frames are preserved as raw bytes. Frame boundaries and AES plaintext interpretation have not been validated.',
+      status: '0x99 temperature fields are labeled only for the documented 20-byte status shape; temperature is the raw integer and unit follows byte 3.',
+    },
+  }, null, 2), 'application/json', 'json');
+}
+
+function csvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function exportCaptureCsv() {
+  if (!captureSession) return;
+  const columns = [
+    'timestamp_utc', 'elapsed_ms', 'event_type', 'direction', 'opcode_hex',
+    'byte_length', 'raw_hex', 'write_succeeded', 'write_error',
+    'status_temperature_raw', 'temperature_unit', 'session_active', 'marker',
+    'event_target_temperature', 'event_target_unit', 'event_session_mode',
+    'device_model', 'device_name', 'firmware_build', 'capture_session_mode',
+    'capture_target_temperature', 'capture_target_unit', 'atomizer_setup', 'capture_notes',
+  ];
+  const rows = captureSession.events.map(event => [
+    event.timestamp_utc,
+    event.elapsed_ms,
+    event.event_type,
+    event.direction,
+    event.opcode === null || event.opcode === undefined ? '' : `0x${event.opcode.toString(16).padStart(2, '0')}`,
+    event.byte_length,
+    event.raw_hex,
+    event.write_succeeded,
+    event.write_error,
+    event.status_temperature_raw,
+    event.temperature_unit,
+    event.session_active,
+    event.label,
+    event.target_temperature,
+    event.target_temperature_unit,
+    event.session_mode,
+    captureSession.metadata.device_model,
+    captureSession.metadata.device_name,
+    captureSession.metadata.firmware_build,
+    captureSession.metadata.session_mode,
+    captureSession.metadata.target_temperature,
+    captureSession.metadata.target_temperature_unit,
+    captureSession.metadata.atomizer_setup,
+    captureSession.metadata.notes,
+  ].map(csvCell).join(','));
+  downloadCapture([columns.join(','), ...rows].join('\r\n'), 'text/csv', 'csv');
 }
 
 function setConnected(on) {
@@ -295,11 +565,21 @@ function setConnected(on) {
   btnReadInfo.disabled = !on;
   btnReadBattery.disabled = !on;
   btnSend.disabled = !on;
+  updateCaptureUi();
 }
 
 function onNotify(event) {
-  const value = new Uint8Array(event.target.value.buffer);
+  const data = event.target.value;
+  const value = new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   log('RX', value);
+}
+
+function inferDeviceModel(name) {
+  const normalized = (name || '').toUpperCase();
+  if (normalized.includes('SPORT')) return 'Carta Sport';
+  if (normalized.includes('AERIS')) return 'Aeris';
+  if (normalized.includes('QUANTUM') || normalized.includes('CARTA 2')) return 'Carta 2 (Quantum)';
+  return null;
 }
 
 async function connect() {
@@ -310,7 +590,15 @@ async function connect() {
 
   try {
     device = await navigator.bluetooth.requestDevice(options);
-    device.addEventListener('gattserverdisconnected', () => setConnected(false));
+    if (!captureModelManuallySelected) {
+      const inferredModel = inferDeviceModel(device.name);
+      $('captureModel').value = inferredModel || 'Unknown';
+      captureModelSource = inferredModel ? 'bluetooth_device_name' : 'unrecognized_bluetooth_name';
+    }
+    device.addEventListener('gattserverdisconnected', () => {
+      stopCapture('Device disconnected');
+      setConnected(false);
+    });
     server = await device.gatt.connect();
     service = await server.getPrimaryService(SERVICE);
     readChar = await service.getCharacteristic(READ_CHAR);
@@ -331,6 +619,7 @@ async function connect() {
 }
 
 async function disconnect() {
+  stopCapture('Disconnected by user');
   if (device && device.gatt.connected) device.gatt.disconnect();
   setConnected(false);
 }
@@ -386,9 +675,9 @@ async function send() {
   const bytes = new Uint8Array(parts);
   try {
     await writeChar.writeValue(bytes.buffer);
-    log('TX', bytes);
+    log('TX', bytes, true);
   } catch (e) {
-    log('TX', bytes);
+    log('TX', bytes, false, e.message);
     const div = document.createElement('div');
     div.className = 'entry';
     div.innerHTML = `<span style="color:var(--err)">write failed: ${e.message}</span>`;
@@ -401,6 +690,18 @@ btnDisconnect.addEventListener('click', disconnect);
 btnReadInfo.addEventListener('click', readDeviceInfo);
 btnReadBattery.addEventListener('click', readBattery);
 btnSend.addEventListener('click', send);
+$('captureModel').addEventListener('change', () => {
+  captureModelManuallySelected = true;
+  captureModelSource = 'manual';
+});
+$('btnCaptureStart').addEventListener('click', startCapture);
+$('btnCaptureStop').addEventListener('click', () => stopCapture());
+$('btnCaptureMark').addEventListener('click', addCaptureMarker);
+$('btnCaptureJson').addEventListener('click', exportCaptureJson);
+$('btnCaptureCsv').addEventListener('click', exportCaptureCsv);
+$('captureMarker').addEventListener('keydown', event => {
+  if (event.key === 'Enter') addCaptureMarker();
+});
 $('btnClear').addEventListener('click', () => logEl.innerHTML = '');
 $('btnExport').addEventListener('click', () => {
   const blob = new Blob([logEl.innerText], { type: 'text/plain' });
