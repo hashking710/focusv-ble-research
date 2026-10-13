@@ -571,13 +571,13 @@ for why the split exists).
 - **The store** lives outside both OTA banks (stock wipes the bank it isn't running from at every
   boot), as two copies with a commit byte written last, so a power cut never loses it.
 - **Detection.** The patch wraps the stock send of the `0xAA` dab-counter reply (Carta 2 `0x11562`,
-  Aeris `0xb066`, Sport `0xa9ea`) and queues an `0xBC` announcement (protocol 8 now; flags, preset,
+  Aeris `0xb066`, Sport `0xa9ea`) and queues an `0xBC` announcement (protocol 9 now; flags, preset,
   offset), then the colour and preset reports. The notify routines (`0x15a34` / `0xe734` /
   `0xec3c`) are the SDK's `bls_att_pushNotifyData` (handle 27).
 
-**The device gestures.** Carta 2: four clicks on the idle live view switch the mode (they replace
-stock's device lock: no button event can lock it any more, and a lock already set still unlocks with
-four clicks); a long hold opens the preset strip; holding − or + while pressing power five times
+**The device gestures.** Carta 2: four clicks on the idle live view switch the mode -- or, as a setting (protocol 9,
+`0xF3`), are stock's device lock instead, never both; by default no button event can lock it, and a
+lock already set still unlocks with four clicks; a long hold opens the preset strip; holding − or + while pressing power five times
 powers on in Terpline / Focus V mode (stock ignores the main button while another is down, so the
 patch counts those presses from the pins), and the held button's events and its release are taken so
 no editor opens; a press that wakes the screensaver only wakes it. Aeris and Sport: a click opens the
