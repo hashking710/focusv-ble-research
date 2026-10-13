@@ -35,6 +35,7 @@ this one is how every address and protocol detail it relies on was found.
 |---|---|
 | **[BLE Protocol Reference](docs/ble-protocol.md)** | GATT services/characteristics, packet framing, every write/notify opcode found, the real firmware-OTA and screensaver-image wire protocols |
 | **[Firmware Architecture Reference](docs/firmware-architecture.md)** | Chip/toolchain, boot chain, the confirmed closed-loop PID temperature controller, thermal safety subsystem, flash layout, firmware self-update mechanism |
+| **[iOS Web App](docs/ios-web-app.md)** | How focusv.app runs on iPhone through The V Browser (dialogs, fullscreen, head tags, Bluetooth filters), and how Terpline matches it |
 | **[Methodology](docs/methodology.md)** | How this was done, plus two non-obvious Ghidra/Telink-TC32 tooling gotchas worth knowing before repeating any of it |
 | **[Hardware Setup Guide](docs/hardware-setup.md)** | Step-by-step instructions for the logic analyzer, SWD probe, and SWire recovery tooling — written for a hobbyist with basic soldering experience |
 | **[Open Questions](docs/open-questions.md)** | What's still unresolved, as a current punch list |
